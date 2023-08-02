@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +20,7 @@ import (
 )
 
 var (
-	url      string
+	url  string
 	numParts int
 	log      *logrus.Logger
 )
@@ -41,7 +42,6 @@ func main() {
 
 	log.WithField("URL", url).Debug("Creating HTTP request for URL") // Add debug output
 
-	// Create a custom HTTP client with a timeout
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout: 60 * time.Second,
@@ -96,7 +96,15 @@ func main() {
 		"RangeSize": rangeSize,
 	}).Debug("Calculated File size and Range size") // Print file size and range size. . Debug output
 
-	outFile, err := os.Create("output")
+	parsedURL, err := url.Parse(url)
+	if err != nil {
+		log.Fatal("Invalid URL")
+	}
+
+	// Get the file name from the URL
+	fileName := path.Base(parsedURL.Path)
+
+	outFile, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
@@ -115,7 +123,7 @@ func main() {
 			log.WithFields(logrus.Fields{
 				"Start":  start,
 				"End": end-1,
-			}).Debug("Downloading range Start to End\n") // Add debug output
+			}).Debug("Downloading range Start to End") // Add debug output
 
 			if i == numParts-1 {
 				end = size
@@ -127,18 +135,16 @@ func main() {
 			}
 
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
-			// resp, err := http.DefaultClient.Do(req)
+
 			resp, err := client.Do(req) // Use the custom client
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
 			defer resp.Body.Close()
 
-			fmt.Printf("Writing to file: output.part%d\n", i+1) // Print the part being written. Debug output
-
 			log.WithFields(logrus.Fields{
 				"Number": i+1,
-			}).Debug("Writing to file: output.partNumber\n") // Print the part being written. Debug output
+			}).Debug("Writing to file: output.partNumber") // Print the part being written. Debug output
 
 			outFilePart, err := os.Create(fmt.Sprintf("output.part%d", i+1))
 			if err != nil {
@@ -167,7 +173,7 @@ func main() {
 
 	fmt.Println("File downloaded and assembled")
 
-	fileHash, err := hashFile("output")
+	fileHash, err := hashFile(fileName)
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
