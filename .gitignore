@@ -14,6 +14,12 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
+# Fragments of a file needed to assemble it.
+*.part
+
+# Bakup files
+*.bak*
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
