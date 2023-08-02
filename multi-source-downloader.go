@@ -14,26 +14,33 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var (
 	url      string
 	numParts int
+	log      *logrus.Logger
 )
 
 func init() {
 	flag.StringVar(&url, "url", "", "URL of the file to download")
 	flag.IntVar(&numParts, "n", 5, "Number of parts to split the download into")
 	flag.Parse()
+
+	log = logrus.New()
+	log.SetFormatter(&logrus.TextFormatter{})
+	log.SetLevel(logrus.DebugLevel)
 }
 
 func main() {
 	if len(url) == 0 {
-		fmt.Println("URL is required")
-		os.Exit(1)
+		log.Fatal("URL is required")
 	}
 
-	fmt.Printf("Creating HTTP request for %s\n", url) // Add debug output
+	log.WithField("URL", url).Debug("Creating HTTP request for URL") // Add debug output
+
 	// Create a custom HTTP client with a timeout
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -41,21 +48,19 @@ func main() {
 		},
 	}
 
-	fmt.Println("Performing HTTP request") // Add debug output
+	log.Debug("Performing HTTP request") // Add debug output
+
 	req, err := http.NewRequest("HEAD", url, nil)
 	if err != nil {
-		fmt.Println("Error: ", err)
-		os.Exit(1)
+		log.Fatal("Error: ", err)
 	}
 
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Error: ", err)
-		os.Exit(1)
+		log.Fatal("Error: ", err)
 	}
 	if res.StatusCode != http.StatusOK {
-		fmt.Println("Server returned non-200 status code")
-		os.Exit(1)
+		log.Fatal("Server returned non-200 status code")
 	}
 
 	etag := res.Header.Get("Etag")
@@ -70,26 +75,30 @@ func main() {
 		hashType = "unknown"
 	}
 
-	fmt.Printf("Etag: %s, HashType: %s\n", etag, hashType) // Print Etag and HashType. Debug output
+	log.WithFields(logrus.Fields{
+		"Etag":     etag,
+		"HashType": hashType,
+	}).Debug("Received Etag and HashType") // Print Etag and HashType. Debug output
 
 	size, err := strconv.Atoi(res.Header.Get("Content-Length"))
 	if err != nil {
-		fmt.Println("Invalid Content-Length received from server")
-		os.Exit(1)
+		log.Fatal("Invalid Content-Length received from server")
 	}
 
-	fmt.Println("Starting download")
+	log.Debug("Starting download")
 
 	var wg sync.WaitGroup
 	wg.Add(numParts)
 
 	rangeSize := size / numParts
-	fmt.Printf("File size: %d, Range size: %d\n", size, rangeSize) // Print file size and range size. . Debug output
+	log.WithFields(logrus.Fields{
+		"FileSize":  size,
+		"RangeSize": rangeSize,
+	}).Debug("Calculated File size and Range size") // Print file size and range size. . Debug output
 
 	outFile, err := os.Create("output")
 	if err != nil {
-		fmt.Println("Error: ", err)
-		os.Exit(1)
+		log.Fatal("Error: ", err)
 	}
 	defer outFile.Close()
 
@@ -103,7 +112,10 @@ func main() {
 			start := i * rangeSize
 			end := start + rangeSize
 
-			fmt.Printf("Downloading range %d to %d\n", start, end-1) // Print range being downloaded. Debug output
+			log.WithFields(logrus.Fields{
+				"Start":  start,
+				"End": end-1,
+			}).Debug("Downloading range Start to End\n") // Add debug output
 
 			if i == numParts-1 {
 				end = size
@@ -111,24 +123,26 @@ func main() {
 
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
-				fmt.Println("Error: ", err)
-				os.Exit(1)
+				log.Fatal("Error: ", err)
 			}
 
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
 			// resp, err := http.DefaultClient.Do(req)
 			resp, err := client.Do(req) // Use the custom client
 			if err != nil {
-				fmt.Println("Error: ", err)
-				os.Exit(1)
+				log.Fatal("Error: ", err)
 			}
 			defer resp.Body.Close()
 
 			fmt.Printf("Writing to file: output.part%d\n", i+1) // Print the part being written. Debug output
+
+			log.WithFields(logrus.Fields{
+				"Number": i+1,
+			}).Debug("Writing to file: output.partNumber\n") // Print the part being written. Debug output
+
 			outFilePart, err := os.Create(fmt.Sprintf("output.part%d", i+1))
 			if err != nil {
-				fmt.Println("Error: ", err)
-				os.Exit(1)
+				log.Fatal("Error: ", err)
 			}
 			defer outFilePart.Close()
 
@@ -142,8 +156,7 @@ func main() {
 	for i := 0; i < numParts; i++ {
 		outFilePart, err := os.Open(fmt.Sprintf("output.part%d", i+1))
 		if err != nil {
-			fmt.Println("Error: ", err)
-			os.Exit(1)
+			log.Fatal("Error: ", err)
 		}
 
 		io.Copy(outFile, outFilePart)
@@ -156,12 +169,15 @@ func main() {
 
 	fileHash, err := hashFile("output")
 	if err != nil {
-		fmt.Println("Error: ", err)
-		os.Exit(1)
+		log.Fatal("Error: ", err)
 	}
 
-	fmt.Printf("File Hashes: MD5: %s, SHA1: %s, SHA256: %s\n", fileHash.md5, fileHash.sha1, fileHash.sha256) // Print file hashes. Debug output
-	
+	log.WithFields(logrus.Fields{
+		"MD5":    fileHash.md5,
+		"SHA1":   fileHash.sha1,
+		"SHA256": fileHash.sha256,
+	}).Debug("File Hashes")  // Print file hashes. Debug output
+
 	if hashType == "strong" && (etag == fileHash.md5 || etag == fileHash.sha1 || etag == fileHash.sha256) {
 		fmt.Println("File hash matches Etag")
 	} else if hashType == "weak" && strings.HasPrefix(etag, fileHash.md5) {
