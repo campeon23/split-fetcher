@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -20,13 +21,13 @@ import (
 )
 
 var (
-	url  string
+	urlFile  string
 	numParts int
 	log      *logrus.Logger
 )
 
 func init() {
-	flag.StringVar(&url, "url", "", "URL of the file to download")
+	flag.StringVar(&urlFile, "url", "", "URL of the file to download")
 	flag.IntVar(&numParts, "n", 5, "Number of parts to split the download into")
 	flag.Parse()
 
@@ -36,11 +37,11 @@ func init() {
 }
 
 func main() {
-	if len(url) == 0 {
+	if len(urlFile) == 0 {
 		log.Fatal("URL is required")
 	}
 
-	log.WithField("URL", url).Debug("Creating HTTP request for URL") // Add debug output
+	log.WithField("URL", urlFile).Debug("Creating HTTP request for URL") // Add debug output
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -50,7 +51,7 @@ func main() {
 
 	log.Debug("Performing HTTP request") // Add debug output
 
-	req, err := http.NewRequest("HEAD", url, nil)
+	req, err := http.NewRequest("HEAD", urlFile, nil)
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
@@ -80,6 +81,7 @@ func main() {
 		"HashType": hashType,
 	}).Debug("Received Etag and HashType") // Print Etag and HashType. Debug output
 
+
 	size, err := strconv.Atoi(res.Header.Get("Content-Length"))
 	if err != nil {
 		log.Fatal("Invalid Content-Length received from server")
@@ -96,7 +98,7 @@ func main() {
 		"RangeSize": rangeSize,
 	}).Debug("Calculated File size and Range size") // Print file size and range size. . Debug output
 
-	parsedURL, err := url.Parse(url)
+	parsedURL, err := url.Parse(urlFile)
 	if err != nil {
 		log.Fatal("Invalid URL")
 	}
@@ -118,23 +120,24 @@ func main() {
 			time.Sleep(time.Duration(i) * time.Second)
 
 			start := i * rangeSize
-			end := start + rangeSize
-
-			log.WithFields(logrus.Fields{
-				"Start":  start,
-				"End": end-1,
-			}).Debug("Downloading range Start to End") // Add debug output
-
-			if i == numParts-1 {
-				end = size
+			var end int
+			if i < numParts-1 {
+				end = start + rangeSize
+			} else {
+				end = size // Corrected here
 			}
 
-			req, err := http.NewRequest("GET", url, nil)
+			req, err := http.NewRequest("GET", urlFile, nil)
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
 
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
+
+			log.WithFields(logrus.Fields{
+				"Start": start,
+				"End": end-1,
+			}).Debug("Downloading range Start to End") // Add debug output
 
 			resp, err := client.Do(req) // Use the custom client
 			if err != nil {
