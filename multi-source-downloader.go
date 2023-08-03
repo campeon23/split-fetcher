@@ -21,12 +21,14 @@ import (
 )
 
 var (
+	hashFileURL string
 	urlFile  string
 	numParts int
 	log      *logrus.Logger
 )
 
 func init() {
+	flag.StringVar(&hashFileURL, "hashes", "", "URL of the file containing the hashes")
 	flag.StringVar(&urlFile, "url", "", "URL of the file to download")
 	flag.IntVar(&numParts, "n", 5, "Number of parts to split the download into")
 	flag.Parse()
@@ -36,7 +38,45 @@ func init() {
 	log.SetLevel(logrus.DebugLevel)
 }
 
+func downloadAndParseHashFile() (map[string]string, error) {
+	resp, err := http.Get(hashFileURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	hashes := make(map[string]string)
+	for _, line := range lines {
+		parts := strings.Split(line, " ")
+		if len(parts) != 2 {
+			continue
+		}
+		hashes[parts[0]] = parts[1]
+	}
+
+	log.WithField("hashes", hashes).Debug("Obtaining hashes from file.") // Add debug output
+
+	return hashes, nil
+}
+
 func main() {
+
+	hashes := make(map[string]string)
+	if len(hashFileURL) != 0 {
+		var err error
+		log.WithField("URL", hashFileURL).Debug("Creating HTTP request for URL") // Add debug output
+		hashes, err = downloadAndParseHashFile()
+		if err != nil {
+			log.Fatal("Error: ", err)
+		}
+	}
+
 	if len(urlFile) == 0 {
 		log.Fatal("URL is required")
 	}
@@ -207,6 +247,22 @@ func main() {
 		fmt.Println("Unknown Etag format, cannot check hash")
 	} else {
 		fmt.Println("File hash does not match Etag")
+	}
+
+	log.WithFields(logrus.Fields{
+		"File":   fileName,
+		"Hash":   hashes[fileName],
+		"SHA256": fileHash.sha256,
+	}).Debug("File Hashes")  // Print file hashes. Debug output
+
+	// Check if the file hash matches the one in the hash file
+	if hash, ok := hashes[fileName]; ok {
+		// if hash != fileHash.md5 && hash != fileHash.sha1 && hash != fileHash.sha256 {
+		if hash != fileHash.sha256 {
+			fmt.Println("File hash does not match hash from hash file")
+		} else {
+			fmt.Println("File hash matches hash from hash file")
+		}
 	}
 }
 
