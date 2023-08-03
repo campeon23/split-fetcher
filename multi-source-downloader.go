@@ -27,8 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"io/ioutil"
-
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/pbkdf2"
@@ -292,7 +290,7 @@ func decryptFile(encryptedFilename string, key []byte) error {
 		return err
 	}
 
-	ciphertext, err := ioutil.ReadAll(encryptedFile)
+	ciphertext, err := io.ReadAll(encryptedFile)
 	if err != nil {
 		return err
 	}
