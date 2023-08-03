@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,13 +172,14 @@ func main() {
 	}
 
 	etag := res.Header.Get("Etag")
+	etag = strings.ReplaceAll(etag, "\"", "") // Remove double quotes
 	var hashType string
-	if strings.HasPrefix(etag, "W/\"") {
+	if strings.HasPrefix(etag, "W/") {
 		hashType = "weak"
-		etag = etag[3 : len(etag)-1]
-	} else if strings.HasPrefix(etag, "\"") {
+		etag = etag[2:] // We've already removed the quotes, so we only need to skip the "W/"
+	} else if etag != "" {
 		hashType = "strong"
-		etag = etag[1 : len(etag)-1]
+		// The quotes are already removed, so no need to modify the etag string
 	} else {
 		hashType = "unknown"
 	}
@@ -212,6 +215,12 @@ func main() {
 
 	// Get the file name from the URL
 	fileName := path.Base(parsedURL.Path)
+
+	// Computing the MD5 hash
+	md5HashFileName := md5.Sum([]byte(fileName))
+
+	// Converting the hash to a hexadecimal string
+	md5HashString := hex.EncodeToString(md5HashFileName[:])
 
 	outFile, err := os.Create(fileName)
 	if err != nil {
@@ -251,12 +260,15 @@ func main() {
 			}
 			defer resp.Body.Close()
 
-			log.Debugw(
-				"Writing to file: output.partNumber", 
-				"Number", i+1,
-			) // Print the part being written. Debug output
+			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
-			outFilePart, err := os.Create(fmt.Sprintf("output.part%d", i+1))
+			log.Debugw(
+				"Writing to file: part-",
+				"md5 hash string", md5HashString,
+				"timestamp", timestamp,
+			) // Print the md5 hash string and the timestamp being written. Debug output
+
+			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d", md5HashString, timestamp))
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
@@ -270,14 +282,58 @@ func main() {
 				log.Fatal("Error: File part not completely copied")
 			}
 
-			fmt.Printf("Downloaded part %d\n", i+1)
+			log.Debugw(
+				"Downloaded part", 
+				"part file",			i+1,
+				"md5 hash string", 		md5HashString, 
+				"timestamp",	timestamp,
+				"fileName", outFilePart,
+			) // Print the part being written. Debug output
 		}(i)
 	}
 
 	wg.Wait()
 
-	for i := 0; i < numParts; i++ {
-		outFilePart, err := os.Open(fmt.Sprintf("output.part%d", i+1))
+	files, err := filepath.Glob("part-*")
+	if err != nil {
+		log.Fatal("Error: ", err)
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		// Extract the timestamp part from the filenames
+		timestampI := strings.Split(files[i], "-")[2]
+		timestampJ := strings.Split(files[j], "-")[2]
+
+		// Convert the extracted timestamp strings to integers
+		timeI, err := strconv.ParseInt(timestampI, 10, 64)
+		if err != nil {
+			log.Fatal("Error parsing timestamp: ", err)
+		}
+		timeJ, err := strconv.ParseInt(timestampJ, 10, 64)
+		if err != nil {
+			log.Fatal("Error parsing timestamp: ", err)
+		}
+
+		log.Debugw("Extracting timestamps from files",
+			"timestampI", timestampI,
+			"timestampJ", timestampJ,
+			"timeI", timeI,
+			"timeJ", timeJ,
+		)
+
+		// Compare the timestamps to determine the sorting order
+		return timeI < timeJ
+	})
+
+	// Now you can iterate through `files` and read and combine them in the sorted order
+
+	for i, file := range files {
+		log.Debugw(
+			"Downloaded part", 
+			"part file",	i+1,
+			"file", 		file,
+		) // Print the part being assembled. Debug output
+		outFilePart, err := os.Open(file)
 		if err != nil {
 			log.Fatal("Error: ", err)
 		}
@@ -286,16 +342,17 @@ func main() {
 		if err != nil {
 			log.Fatal("Error: ", err)
 		}
+
 		if copied != int64(rangeSize) && i != numParts-1 {
 			log.Fatal("Error: File part not completely copied")
 		}
 
 		outFilePart.Close()
-
-		os.Remove(fmt.Sprintf("output.part%d", i+1))
+		os.Remove(file)
 	}
 
 	log.Debug("File downloaded and assembled")
+
 
 	fileHash, err := hashFile(fileName)
 	if err != nil {
