@@ -1,25 +1,37 @@
 package main
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"os/user"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"io/ioutil"
+
+	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 var (
@@ -28,6 +40,28 @@ var (
 	numParts 	int
 	log *zap.SugaredLogger
 )
+
+type fileHashes struct {
+	md5    string
+	sha1   string
+	sha256 string
+}
+
+// Adding a new structure to represent the JSON configuration
+type DownloadConfig struct {
+	UUID             string                `json:"uuid"`
+	Filename         string                `json:"filename"`
+	URL              string                `json:"url"`
+	Etag			 string                `json:"etag"`
+	HashType		 string                `json:"hash_type"`
+	DownloadedParts  []DownloadedPart      `json:"downloaded_parts"`
+}
+
+type DownloadedPart struct {
+	PartNumber int    `json:"part_number"`
+	FileHash   string `json:"file_hash"`
+	Timestamp  int64  `json:"timestamp"`
+}
 
 func init() {
 	flag.StringVar(&hashFileURL, "hashes", "", "URL of the file containing the hashes")
@@ -98,11 +132,6 @@ func generateETag(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-type fileHashes struct {
-	md5    string
-	sha1   string
-	sha256 string
-}
 
 func hashFile(path string) (fileHashes, error) {
 	file, err := os.Open(path)
@@ -124,6 +153,180 @@ func hashFile(path string) (fileHashes, error) {
 		sha1:   hex.EncodeToString(hSha1.Sum(nil)),
 		sha256: hex.EncodeToString(hSha256.Sum(nil)),
 	}, nil
+}
+
+func getDownloadConfigPath() string {
+	if runtime.GOOS == "windows" {
+		user, err := user.Current()
+		if err != nil {
+			log.Fatal("Error fetching user information: ", err)
+		}
+		return filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader", ".config.json")
+	}
+	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".config.json")
+}
+
+func saveDownloadConfig(config DownloadConfig) {
+	configPath := getDownloadConfigPath()
+
+	// Ensure the directory exists
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		log.Fatal("Error creating config directory: ", err)
+	}
+
+	// Debugging: Check if the directory was created
+	if dirExists(configDir) {
+		log.Debugw("Directory created successfully", "directory", configDir)
+	} else {
+		log.Warnw("Directory not found", "directory", configDir)
+	}
+
+	file, err := os.Create(configPath)
+	if err != nil {
+		log.Fatal("Error creating config file: ", err)
+	}
+	defer file.Close()
+
+	// Debugging: Check if the file was created
+	if _, err := os.Stat(configPath); err == nil {
+		log.Debugw("File created successfully", "file", configPath)
+	} else {
+		log.Warnw("File not found", "file", configPath)
+	}
+
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(config); err != nil {
+		log.Fatal("Error encoding config JSON: ", err)
+	}
+
+	// On Windows, make the file hidden
+	if runtime.GOOS == "windows" {
+		cmd := fmt.Sprintf("attrib +h %s", configPath)
+		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
+			log.Fatal("Error hiding config file: ", err)
+		}
+	}
+}
+
+func createEncryptionKey(strings []string) ([]byte, error) {
+	// Sort the strings in reverse order
+	sort.Sort(sort.Reverse(sort.StringSlice(strings)))
+
+	// Concatenate the sorted strings
+	var buffer bytes.Buffer
+	for _, str := range strings {
+		buffer.WriteString(str)
+	}
+
+	// Use the concatenated string with PBKDF2 to derive a key
+	salt := []byte("your-salt") // Use a constant or random salt as needed
+	key := pbkdf2.Key([]byte(buffer.Bytes()), salt, 4096, 32, sha256.New) // Pass the buffer as a byte slice
+
+	return key, nil
+}
+
+// encryptFile encrypts the file with the given key and writes the encrypted data to a new file
+func encryptFile(filename string, key []byte) error {
+	plaintext, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return err
+	}
+
+	encrypter := cipher.NewCBCEncrypter(block, iv)
+
+	paddingLength := aes.BlockSize - len(plaintext)%aes.BlockSize
+	padding := make([]byte, paddingLength)
+	for i := range padding {
+		padding[i] = byte(paddingLength)
+	}
+	plaintext = append(plaintext, padding...)
+
+	ciphertext := make([]byte, len(plaintext))
+	encrypter.CryptBlocks(ciphertext, plaintext)
+
+	encryptedFilename := filename + ".enc"
+	encryptedFile, err := os.Create(encryptedFilename)
+	if err != nil {
+		return err
+	}
+	defer encryptedFile.Close()
+
+	encryptedFile.Write(iv)
+	encryptedFile.Write(ciphertext)
+
+	log.Debugw("File encrypted successfully and saved as:", 
+		"encryptedFilename", encryptedFilename,
+	)
+
+	return nil
+}
+
+func dirExists(path string) bool {
+    stat, err := os.Stat(path)
+    if err != nil {
+ 	   return false
+    }
+    return stat.IsDir()
+}
+
+func decryptFile(encryptedFilename string, key []byte) error {
+	encryptedFile, err := os.Open(encryptedFilename)
+	if err != nil {
+		return err
+	}
+	defer encryptedFile.Close()
+
+	iv := make([]byte, aes.BlockSize)
+	_, err = encryptedFile.Read(iv)
+	if err != nil {
+		return err
+	}
+
+	ciphertext, err := ioutil.ReadAll(encryptedFile)
+	if err != nil {
+		return err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+
+	decrypter := cipher.NewCBCDecrypter(block, iv)
+	plaintext := make([]byte, len(ciphertext))
+	decrypter.CryptBlocks(plaintext, ciphertext)
+
+	paddingLength := int(plaintext[len(plaintext)-1])
+	plaintext = plaintext[:len(plaintext)-paddingLength]
+
+	decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc") + ".dec"
+	decryptedFile, err := os.Create(decryptedFilename)
+	if err != nil {
+		return err
+	}
+	defer decryptedFile.Close()
+
+	_, err = decryptedFile.Write(plaintext)
+	if err != nil {
+		return err
+	}
+
+	log.Debugw("File decrypted successfully and saved as:",
+		"decryptedFilename", decryptedFilename,
+	)
+
+	return nil
 }
 
 func main() {
@@ -216,11 +419,24 @@ func main() {
 	// Get the file name from the URL
 	fileName := path.Base(parsedURL.Path)
 
+	// Create and initialize the download config
+	downloadConfig := DownloadConfig{
+		UUID:     uuid.New().String(),
+		Filename: fileName,
+		URL:      urlFile,
+		Etag:	  etag,
+		HashType: hashType,
+	}
+
+	log.Debugw("Inititalizing download config", "downloadConfig", downloadConfig) // Add debug output
+
 	outFile, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
 	defer outFile.Close()
+
+	partFilesHashes := make([]string, numParts)
 
 	for i := 0; i < numParts; i++ {
 		go func(i int) {
@@ -264,6 +480,8 @@ func main() {
 			sha256Hash := sha256.Sum256(buf)
 			sha256HashString := hex.EncodeToString(sha256Hash[:])
 
+			partFilesHashes[i] = hex.EncodeToString(sha256Hash[:])
+
 			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
 			log.Debugw(
@@ -271,6 +489,15 @@ func main() {
 				"sha256 hash file", sha256HashString,
 				"timestamp", timestamp,
 			) // Print the md5 hash string and the timestamp being written. Debug output
+
+			// Add downloaded part info to the download config
+			downloadConfig.DownloadedParts = append(downloadConfig.DownloadedParts, DownloadedPart{
+				PartNumber: i + 1,
+				FileHash:   sha256HashString,
+				Timestamp:  timestamp,
+			})
+
+			log.Debugw("Appenging part files metadata in download config", "downloadConfig", downloadConfig) // Add debug output
 
 			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d-%d", sha256HashString, i, timestamp))
 			if err != nil {
@@ -295,6 +522,33 @@ func main() {
 
 	wg.Wait()
 
+	// Saving the download config
+	saveDownloadConfig(downloadConfig)
+
+	// Obtain the encryption key
+	key, err := createEncryptionKey(partFilesHashes)
+	if err != nil {
+		log.Fatal("Error:", err)
+		return
+	}
+
+	// Encrypt the download config
+	configPath := getDownloadConfigPath()
+	err = encryptFile(configPath, key)
+	if err != nil {
+		log.Fatal("Error:", err)
+		return
+	}
+
+	// Decrypt the download config
+	err = decryptFile(configPath+".enc", key)
+	if err != nil {
+		log.Fatal("Error:", err)
+		return
+	}
+
+	// Search for all part-* files in the current directory 
+	//	to proceed to assemble the final file
 	files, err := filepath.Glob("part-*")
 	if err != nil {
 		log.Fatal("Error: ", err)
