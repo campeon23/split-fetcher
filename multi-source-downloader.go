@@ -268,7 +268,9 @@ func main() {
 				"timestamp", timestamp,
 			) // Print the md5 hash string and the timestamp being written. Debug output
 
-			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d", md5HashString, timestamp))
+			// outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d", md5HashString, timestamp))
+			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d-%d", md5HashString, i, timestamp))
+
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
@@ -283,7 +285,7 @@ func main() {
 			}
 
 			log.Debugw(
-				"Downloaded part", 
+				"Downloaded part",
 				"part file",			i+1,
 				"md5 hash string", 		md5HashString, 
 				"timestamp",	timestamp,
@@ -300,30 +302,31 @@ func main() {
 	}
 
 	sort.Slice(files, func(i, j int) bool {
-		// Extract the timestamp part from the filenames
-		timestampI := strings.Split(files[i], "-")[2]
-		timestampJ := strings.Split(files[j], "-")[2]
+		// Extract the part number from the filenames
+		partI := strings.Split(files[i], "-")[2]
+		partJ := strings.Split(files[j], "-")[2]
 
-		// Convert the extracted timestamp strings to integers
-		timeI, err := strconv.ParseInt(timestampI, 10, 64)
+		// Convert the extracted part numbers to integers
+		numI, err := strconv.Atoi(partI)
 		if err != nil {
-			log.Fatal("Error parsing timestamp: ", err)
+			log.Fatal("Error parsing part number: ", err)
 		}
-		timeJ, err := strconv.ParseInt(timestampJ, 10, 64)
+		numJ, err := strconv.Atoi(partJ)
 		if err != nil {
-			log.Fatal("Error parsing timestamp: ", err)
+			log.Fatal("Error parsing part number: ", err)
 		}
 
-		log.Debugw("Extracting timestamps from files",
-			"timestampI", timestampI,
-			"timestampJ", timestampJ,
-			"timeI", timeI,
-			"timeJ", timeJ,
+		log.Debugw("Extracting part numbers from files",
+			"partI", partI,
+			"partJ", partJ,
+			"numI", numI,
+			"numJ", numJ,
 		)
 
-		// Compare the timestamps to determine the sorting order
-		return timeI < timeJ
+		// Compare the part numbers to determine the sorting order
+		return numI < numJ
 	})
+
 
 	// Now you can iterate through `files` and read and combine them in the sorted order
 
