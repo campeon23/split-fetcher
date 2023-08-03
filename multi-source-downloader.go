@@ -120,11 +120,9 @@ func main() {
 			time.Sleep(time.Duration(i) * time.Second)
 
 			start := i * rangeSize
-			var end int
-			if i < numParts-1 {
-				end = start + rangeSize
-			} else {
-				end = size // Corrected here
+			end := start + rangeSize - 1
+			if i == numParts-1 {
+				end = size - 1
 			}
 
 			req, err := http.NewRequest("GET", urlFile, nil)
@@ -132,11 +130,11 @@ func main() {
 				log.Fatal("Error: ", err)
 			}
 
-			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end-1))
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
 			log.WithFields(logrus.Fields{
 				"Start": start,
-				"End": end-1,
+				"End": end,
 			}).Debug("Downloading range Start to End") // Add debug output
 
 			resp, err := client.Do(req) // Use the custom client
@@ -155,7 +153,14 @@ func main() {
 			}
 			defer outFilePart.Close()
 
-			io.Copy(outFilePart, resp.Body)
+			copied, err := io.Copy(outFilePart, resp.Body)
+			if err != nil {
+				log.Fatal("Error: ", err)
+			}
+			if copied != int64(end-start+1) {
+				log.Fatal("Error: File part not completely copied")
+			}
+
 			fmt.Printf("Downloaded part %d\n", i+1)
 		}(i)
 	}
@@ -168,7 +173,14 @@ func main() {
 			log.Fatal("Error: ", err)
 		}
 
-		io.Copy(outFile, outFilePart)
+		copied, err := io.Copy(outFile, outFilePart)
+		if err != nil {
+			log.Fatal("Error: ", err)
+		}
+		if copied != int64(rangeSize) && i != numParts-1 {
+			log.Fatal("Error: File part not completely copied")
+		}
+
 		outFilePart.Close()
 
 		os.Remove(fmt.Sprintf("output.part%d", i+1))
