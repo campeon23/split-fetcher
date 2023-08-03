@@ -81,6 +81,49 @@ func downloadAndParseHashFile() (map[string]string, error) {
 	return hashes, nil
 }
 
+func generateETag(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+type fileHashes struct {
+	md5    string
+	sha1   string
+	sha256 string
+}
+
+func hashFile(path string) (fileHashes, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return fileHashes{}, err
+	}
+	defer file.Close()
+
+	hMd5 := md5.New()
+	hSha1 := sha1.New()
+	hSha256 := sha256.New()
+
+	if _, err := io.Copy(io.MultiWriter(hMd5, hSha1, hSha256), file); err != nil {
+		return fileHashes{}, err
+	}
+
+	return fileHashes{
+		md5:    hex.EncodeToString(hMd5.Sum(nil)),
+		sha1:   hex.EncodeToString(hSha1.Sum(nil)),
+		sha256: hex.EncodeToString(hSha256.Sum(nil)),
+	}, nil
+}
+
 func main() {
 
 	hashes := make(map[string]string)
@@ -276,11 +319,17 @@ func main() {
 		log.Debug("File hash does not match Etag")
 	}
 
+	etagFile, err := generateETag(fileName)
+	if err != nil {
+		panic(err)
+	}
+
 	log.Debugw(
 		"File Hashes", 
-		"File",   fileName,
-		"Hash",   hashes[fileName],
-		"SHA256", fileHash.sha256,
+		"File",   	fileName,
+		"Hash",   	hashes[fileName],
+		"SHA256", 	fileHash.sha256,
+		"ETag",		etagFile,
 	)  // Print file hashes. Debug output
 
 	// Check if the file hash matches the one in the hash file
@@ -292,32 +341,4 @@ func main() {
 			log.Debug("File hash matches hash from hash file")
 		}
 	}
-}
-
-type fileHashes struct {
-	md5    string
-	sha1   string
-	sha256 string
-}
-
-func hashFile(path string) (fileHashes, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return fileHashes{}, err
-	}
-	defer file.Close()
-
-	hMd5 := md5.New()
-	hSha1 := sha1.New()
-	hSha256 := sha256.New()
-
-	if _, err := io.Copy(io.MultiWriter(hMd5, hSha1, hSha256), file); err != nil {
-		return fileHashes{}, err
-	}
-
-	return fileHashes{
-		md5:    hex.EncodeToString(hMd5.Sum(nil)),
-		sha1:   hex.EncodeToString(hSha1.Sum(nil)),
-		sha256: hex.EncodeToString(hSha256.Sum(nil)),
-	}, nil
 }
