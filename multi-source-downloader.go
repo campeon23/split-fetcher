@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,18 +27,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/pbkdf2"
 )
 
-const maxConcurrentConnections = 10 // or another appropriate value
-
 var (
-	hashFileURL string
-	urlFile  	string
-	numParts 	int
-	log *zap.SugaredLogger
+	maxConcurrentConnections 	int
+	hashFileURL 				string
+	urlFile  					string
+	numParts 					int
+	log 						*zap.SugaredLogger
 )
+
+var rootCmd = &cobra.Command{
+	Use:   "multi-source-downloader",
+	Short: `The downloader is a Go app that fetches files in parts concurrently, 
+with options for integrity validation and connection limits.`,
+	Long:  `The multiple source downloader is an application written in Go that splits the file 
+to be downloaded into n parts and downloads them concurrently in an optimized manner. 
+It then assembles the final file, with support for either Etag validation or Hash 
+validation, to ensure file integrity. And more things...`,
+	Run:   execute,
+}
 
 type fileHashes struct {
 	md5    string
@@ -64,10 +75,19 @@ type DownloadedPart struct {
 }
 
 func init() {
-	flag.StringVar(&hashFileURL, "hashes", "", "URL of the file containing the hashes")
-	flag.StringVar(&urlFile, "url", "", "URL of the file to download")
-	flag.IntVar(&numParts, "n", 5, "Number of parts to split the download into")
-	flag.Parse()
+	// cobra.OnInitialize(initConfig)
+	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "connections", "c", 0, `(Optional) Controls how many parts of the 
+file are downloaded at the same time. You can set a specific number, 
+or if you set it to 0, it will choose the best number for you.`)
+	rootCmd.PersistentFlags().StringVarP(&hashFileURL, "hashes", "s", "", `(Optional) The URL of the file containing the hashes refers to a file 
+with either MD5 or SHA-256 hashes, used to verify the integrity and 
+authenticity of the downloaded file.`)
+	rootCmd.PersistentFlags().StringVarP(&urlFile, "url", "u", "", "URL of the file to download")
+	rootCmd.PersistentFlags().IntVarP(&numParts, "n", "n", 5, "(Optional) Number of parts to split the download into")
+
+	viper.BindPFlag("hashes", rootCmd.PersistentFlags().Lookup("hashes"))
+	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
+	viper.BindPFlag("n", rootCmd.PersistentFlags().Lookup("n"))
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -349,10 +369,9 @@ func dirExists(path string) bool {
  	   return false
     }
     return stat.IsDir()
-}
+} 
 
-func main() {
-
+func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numParts int){
 	hashes := make(map[string]string)
 	if len(hashFileURL) != 0 {
 		var err error
@@ -460,10 +479,14 @@ func main() {
 
 	partFilesHashes := make([]string, numParts)
 
-	// sem := make(chan struct{}, maxConcurrentConnections) // maxConcurrentConnections is the limit you set
+	// if maxConcurrentConnections != 0 {
+	sem := make(chan struct{}, maxConcurrentConnections) // maxConcurrentConnections is the limit you set
+	// }
 
 	for i := 0; i < numParts; i++ {
-		// sem <- struct{}{} // acquire a token
+		if maxConcurrentConnections != 0 {
+			sem <- struct{}{} // acquire a token
+		}
 		go func(i int) {
 			defer wg.Done()
 
@@ -542,13 +565,20 @@ func main() {
 				"timestamp", 			timestamp,
 				"filename", 			outFilePart.Name(),
 			) // Print the part being downloaded. Debug output
+
+			if maxConcurrentConnections != 0 {
+				<-sem // release the token
+			}
+
 		}(i)
 	}
 
-	// // wait for all tokens to be released
-	// for i := 0; i < maxConcurrentConnections; i++ {
-	// 	sem <- struct{}{}
-	// }
+	if maxConcurrentConnections != 0 {
+		// wait for all tokens to be released
+		for i := 0; i < maxConcurrentConnections; i++ {
+			sem <- struct{}{}
+		}
+	}
 
 	wg.Wait()
 
@@ -695,5 +725,22 @@ func main() {
 		} else {
 			log.Debug("File hash matches hash from hash file")
 		}
+	}
+}
+
+func execute(cmd *cobra.Command, args []string) {
+	if urlFile == "" {
+		log.Fatal("Error: the --url flag is required")
+	}
+	run(maxConcurrentConnections, hashFileURL, urlFile, numParts)
+}
+
+func main() {
+	// calls the Execute method on the rootCmd object, which is likely an instance of
+	// a Cobra command. The Execute method runs the CLI, parsing the command-line 
+	// arguments and running the appropriate subcommands or functions as defined in 
+	// the program.
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal("Error: ", err)
 	}
 }
