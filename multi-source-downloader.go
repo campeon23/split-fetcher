@@ -216,12 +216,6 @@ func main() {
 	// Get the file name from the URL
 	fileName := path.Base(parsedURL.Path)
 
-	// Computing the MD5 hash
-	md5HashFileName := md5.Sum([]byte(fileName))
-
-	// Converting the hash to a hexadecimal string
-	md5HashString := hex.EncodeToString(md5HashFileName[:])
-
 	outFile, err := os.Create(fileName)
 	if err != nil {
 		log.Fatal("Error: ", err)
@@ -260,37 +254,42 @@ func main() {
 			}
 			defer resp.Body.Close()
 
+			buf := make([]byte, int64(end-start+1))
+			reader := io.LimitReader(resp.Body, int64(end-start+1))
+			_, err = io.ReadFull(reader, buf)
+			if err != nil {
+				log.Fatal("Error: ", err)
+			}
+
+			sha256Hash := sha256.Sum256(buf)
+			sha256HashString := hex.EncodeToString(sha256Hash[:])
+
 			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
 			log.Debugw(
 				"Writing to file: part-",
-				"md5 hash string", md5HashString,
+				"sha256 hash file", sha256HashString,
 				"timestamp", timestamp,
 			) // Print the md5 hash string and the timestamp being written. Debug output
 
-			// outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d", md5HashString, timestamp))
-			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d-%d", md5HashString, i, timestamp))
-
+			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d-%d", sha256HashString, i, timestamp))
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
 			defer outFilePart.Close()
 
-			copied, err := io.Copy(outFilePart, resp.Body)
+			_, err = outFilePart.Write(buf)
 			if err != nil {
 				log.Fatal("Error: ", err)
-			}
-			if copied != int64(end-start+1) {
-				log.Fatal("Error: File part not completely copied")
 			}
 
 			log.Debugw(
 				"Downloaded part",
 				"part file",			i+1,
-				"md5 hash string", 		md5HashString, 
-				"timestamp",	timestamp,
-				"fileName", outFilePart,
-			) // Print the part being written. Debug output
+				"sha256 hash string", 	sha256HashString, 
+				"timestamp", 			timestamp,
+				"filename", 			outFilePart.Name(),
+			) // Print the part being downloaded. Debug output
 		}(i)
 	}
 
