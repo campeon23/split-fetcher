@@ -230,7 +230,7 @@ func createEncryptionKey(strings []string) ([]byte, error) {
 
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
 func encryptFile(filename string, key []byte) error {
-	plaintext, err := ioutil.ReadFile(filename)
+	plaintext, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -271,6 +271,11 @@ func encryptFile(filename string, key []byte) error {
 		"encryptedFilename", encryptedFilename,
 	)
 
+	err = os.Remove(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return nil
 }
 
@@ -304,7 +309,8 @@ func decryptFile(encryptedFilename string, key []byte) error {
 	paddingLength := int(plaintext[len(plaintext)-1])
 	plaintext = plaintext[:len(plaintext)-paddingLength]
 
-	decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc") + ".dec"
+	// decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc") + ".dec"
+	decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc")
 	decryptedFile, err := os.Create(decryptedFilename)
 	if err != nil {
 		return err
@@ -506,7 +512,7 @@ func main() {
 			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
 			log.Debugw(
-				"Writing to file: part-",
+				"Writing to file: ",
 				"sha256 hash file", sha256HashString,
 				"timestamp", timestamp,
 			) // Print the md5 hash string and the timestamp being written. Debug output
@@ -520,7 +526,7 @@ func main() {
 
 			log.Debugw("Appenging part files metadata in download config", "downloadConfig", downloadConfig) // Add debug output
 
-			outFilePart, err := os.Create(fmt.Sprintf("part-%s-%d-%d", sha256HashString, i, timestamp))
+			outFilePart, err := os.Create(fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp))
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
@@ -587,9 +593,9 @@ func main() {
 		log.Fatal("Error decoding .config.json: ", err)
 	}
 
-	// Search for all part-* files in the current directory 
+	// Search for all output-* files in the current directory 
 	//	to proceed to assemble the final file
-	files, err := filepath.Glob("part-*")
+	files, err := filepath.Glob("output-*")
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
