@@ -34,6 +34,8 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+const maxConcurrentConnections = 10 // or another appropriate value
+
 var (
 	hashFileURL string
 	urlFile  	string
@@ -272,14 +274,6 @@ func encryptFile(filename string, key []byte) error {
 	return nil
 }
 
-func dirExists(path string) bool {
-    stat, err := os.Stat(path)
-    if err != nil {
- 	   return false
-    }
-    return stat.IsDir()
-}
-
 func decryptFile(encryptedFilename string, key []byte) error {
 	encryptedFile, err := os.Open(encryptedFilename)
 	if err != nil {
@@ -327,6 +321,30 @@ func decryptFile(encryptedFilename string, key []byte) error {
 	)
 
 	return nil
+}
+
+// Function to calculate the SHA-256 hash of a file
+func calculateSHA256(filename string) (string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func dirExists(path string) bool {
+    stat, err := os.Stat(path)
+    if err != nil {
+ 	   return false
+    }
+    return stat.IsDir()
 }
 
 func main() {
@@ -438,7 +456,10 @@ func main() {
 
 	partFilesHashes := make([]string, numParts)
 
+	// sem := make(chan struct{}, maxConcurrentConnections) // maxConcurrentConnections is the limit you set
+
 	for i := 0; i < numParts; i++ {
+		// sem <- struct{}{} // acquire a token
 		go func(i int) {
 			defer wg.Done()
 
@@ -520,6 +541,11 @@ func main() {
 		}(i)
 	}
 
+	// // wait for all tokens to be released
+	// for i := 0; i < maxConcurrentConnections; i++ {
+	// 	sem <- struct{}{}
+	// }
+
 	wg.Wait()
 
 	// Saving the download config
@@ -547,6 +573,20 @@ func main() {
 		return
 	}
 
+	// Read the .config.json file
+	configFile, err := os.Open(configPath)
+	if err != nil {
+		log.Fatal("Error opening .config.json: ", err)
+	}
+	defer configFile.Close()
+
+	// Decode the JSON content into a map
+	var config DownloadConfig // The JSON structure defined above as DownloadConfig
+	decoder := json.NewDecoder(configFile)
+	if err := decoder.Decode(&config); err != nil {
+		log.Fatal("Error decoding .config.json: ", err)
+	}
+
 	// Search for all part-* files in the current directory 
 	//	to proceed to assemble the final file
 	files, err := filepath.Glob("part-*")
@@ -555,34 +595,32 @@ func main() {
 	}
 
 	sort.Slice(files, func(i, j int) bool {
-		// Extract the part number from the filenames
-		partI := strings.Split(files[i], "-")[2]
-		partJ := strings.Split(files[j], "-")[2]
-
-		// Convert the extracted part numbers to integers
-		numI, err := strconv.Atoi(partI)
+		hashI, err := calculateSHA256(files[i])
 		if err != nil {
-			log.Fatal("Error parsing part number: ", err)
+			log.Fatal("Error calculating hash: ", err)
 		}
-		numJ, err := strconv.Atoi(partJ)
+		hashJ, err := calculateSHA256(files[j])
 		if err != nil {
-			log.Fatal("Error parsing part number: ", err)
+			log.Fatal("Error calculating hash: ", err)
 		}
 
-		log.Debugw("Extracting part numbers from files",
-			"partI", partI,
-			"partJ", partJ,
-			"numI", numI,
-			"numJ", numJ,
-		)
+		// Get the part numbers from the .config.json file
+		numI, numJ := -1, -1
+		for _, part := range config.DownloadedParts {
+			if part.FileHash == hashI {
+				numI = part.PartNumber
+			}
+			if part.FileHash == hashJ {
+				numJ = part.PartNumber
+			}
+		}
 
 		// Compare the part numbers to determine the sorting order
 		return numI < numJ
 	})
 
 
-	// Now you can iterate through `files` and read and combine them in the sorted order
-
+	// Iterate through `files` and read and combine them in the sorted order
 	for i, file := range files {
 		log.Debugw(
 			"Downloaded part", 
