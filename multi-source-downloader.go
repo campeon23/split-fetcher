@@ -17,14 +17,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
 	hashFileURL string
 	urlFile  	string
 	numParts 	int
-	log      	*logrus.Logger
+	log *zap.SugaredLogger
 )
 
 func init() {
@@ -33,9 +33,12 @@ func init() {
 	flag.IntVar(&numParts, "n", 5, "Number of parts to split the download into")
 	flag.Parse()
 
-	log = logrus.New()
-	log.SetFormatter(&logrus.TextFormatter{})
-	log.SetLevel(logrus.DebugLevel)
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync() // Flushes buffer, if any
+	log = logger.Sugar()
 }
 
 func downloadAndParseHashFile() (map[string]string, error) {
@@ -54,11 +57,11 @@ func downloadAndParseHashFile() (map[string]string, error) {
 	hashes := make(map[string]string)
 	for _, line := range lines {
 		parts := strings.SplitN(line, "*", 2)
-		log.WithFields(logrus.Fields{
-			"lenght": len(parts),
-			"parts": parts,
-		}).Debug("Parsing content from hashes file.") // Add debug output
-		// if len(parts) != 2 && len(parts) != 1{
+		log.Debugw(
+			"Parsing content from hashes file.", 
+			"lenght", len(parts), 
+			"parts", parts,
+		) // Add debug output
 		if len(parts) != 2 {
 			// return nil, fmt.Errorf("Invalid line in hash file: %s", line)
 			continue
@@ -70,7 +73,10 @@ func downloadAndParseHashFile() (map[string]string, error) {
 		hashes[fileName] = hash
 	}
 
-	log.WithField("hashes", hashes).Debug("Obtaining hashes from file.") // Add debug output
+	log.Debugw(
+		"Obtaining hashes from file.", 
+		"hashes", hashes,
+	) // Add debug output
 
 	return hashes, nil
 }
@@ -80,7 +86,10 @@ func main() {
 	hashes := make(map[string]string)
 	if len(hashFileURL) != 0 {
 		var err error
-		log.WithField("URL", hashFileURL).Debug("Creating HTTP request for URL") // Add debug output
+		log.Debugw(
+			"Creating HTTP request for URL",
+			"URL", hashFileURL,
+		) // Add debug output
 		hashes, err = downloadAndParseHashFile()
 		if err != nil {
 			log.Fatal("Error: ", err)
@@ -91,7 +100,10 @@ func main() {
 		log.Fatal("URL is required")
 	}
 
-	log.WithField("URL", urlFile).Debug("Creating HTTP request for URL") // Add debug output
+	log.Debugw(
+		"Creating HTTP request for URL",
+		"URL", urlFile,
+	) // Add debug output
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -126,11 +138,11 @@ func main() {
 		hashType = "unknown"
 	}
 
-	log.WithFields(logrus.Fields{
-		"Etag":     etag,
-		"HashType": hashType,
-	}).Debug("Received Etag and HashType") // Print Etag and HashType. Debug output
-
+	log.Debugw(
+		"Received Etag and HashType", 
+		"etag",		etag,
+		"HashType", hashType,
+	) // Print Etag and HashType. Debug output
 
 	size, err := strconv.Atoi(res.Header.Get("Content-Length"))
 	if err != nil {
@@ -143,10 +155,12 @@ func main() {
 	wg.Add(numParts)
 
 	rangeSize := size / numParts
-	log.WithFields(logrus.Fields{
-		"FileSize":  size,
-		"RangeSize": rangeSize,
-	}).Debug("Calculated File size and Range size") // Print file size and range size. . Debug output
+
+	log.Debugw(
+		"Calculated File size and Range size",
+		"FileSize",  size,
+		"RangeSize", rangeSize,
+	) // Print file size and range size. . Debug output
 
 	parsedURL, err := url.Parse(urlFile)
 	if err != nil {
@@ -182,10 +196,11 @@ func main() {
 
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
-			log.WithFields(logrus.Fields{
-				"Start": start,
-				"End": end,
-			}).Debug("Downloading range Start to End") // Add debug output
+			log.Debugw(
+				"Downloading range Start to End", 
+				"Start", start,
+				"End",	 end,
+			) // Add debug output
 
 			resp, err := client.Do(req) // Use the custom client
 			if err != nil {
@@ -193,9 +208,10 @@ func main() {
 			}
 			defer resp.Body.Close()
 
-			log.WithFields(logrus.Fields{
-				"Number": i+1,
-			}).Debug("Writing to file: output.partNumber") // Print the part being written. Debug output
+			log.Debugw(
+				"Writing to file: output.partNumber", 
+				"Number", i+1,
+			) // Print the part being written. Debug output
 
 			outFilePart, err := os.Create(fmt.Sprintf("output.part%d", i+1))
 			if err != nil {
@@ -243,11 +259,12 @@ func main() {
 		log.Fatal("Error: ", err)
 	}
 
-	log.WithFields(logrus.Fields{
-		"MD5":    fileHash.md5,
-		"SHA1":   fileHash.sha1,
-		"SHA256": fileHash.sha256,
-	}).Debug("File Hashes")  // Print file hashes. Debug output
+	log.Debugw(
+		"File Hashes", 
+		"MD5",    fileHash.md5,
+		"SHA1",   fileHash.sha1,
+		"SHA256", fileHash.sha256,
+	)  // Print file hashes. Debug output
 
 	if hashType == "strong" && (etag == fileHash.md5 || etag == fileHash.sha1 || etag == fileHash.sha256) {
 		log.Debug("File hash matches Etag")
@@ -259,11 +276,12 @@ func main() {
 		log.Debug("File hash does not match Etag")
 	}
 
-	log.WithFields(logrus.Fields{
-		"File":   fileName,
-		"Hash":   hashes[fileName],
-		"SHA256": fileHash.sha256,
-	}).Debug("File Hashes")  // Print file hashes. Debug output
+	log.Debugw(
+		"File Hashes", 
+		"File",   fileName,
+		"Hash",   hashes[fileName],
+		"SHA256", fileHash.sha256,
+	)  // Print file hashes. Debug output
 
 	// Check if the file hash matches the one in the hash file
 	if hash, ok := hashes[fileName]; ok {
