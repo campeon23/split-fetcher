@@ -38,6 +38,7 @@ var (
 	hashFileURL 				string
 	urlFile  					string
 	numParts 					int
+	verbose 					bool
 	log 						*zap.SugaredLogger
 )
 
@@ -59,8 +60,9 @@ type fileHashes struct {
 }
 
 // Adding a new structure to represent the JSON configuration
-type DownloadConfig struct {
+type DownloadManifest struct {
 	UUID             string                `json:"uuid"`
+	Version		  	 string                `json:"version"`
 	Filename         string                `json:"filename"`
 	URL              string                `json:"url"`
 	Etag			 string                `json:"etag"`
@@ -84,13 +86,31 @@ with either MD5 or SHA-256 hashes, used to verify the integrity and
 authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&urlFile, "url", "u", "", "URL of the file to download")
 	rootCmd.PersistentFlags().IntVarP(&numParts, "num-parts", "n", 5, "(Optional) Number of parts to split the download into")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "(Optional) Output verbose logging (INFO and Debug), verbose not passed only output INFO logging.")
 
 	viper.BindPFlag("max-connections", rootCmd.PersistentFlags().Lookup("max-connections"))
 	viper.BindPFlag("integrity-hashes", rootCmd.PersistentFlags().Lookup("integrity-hashes"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
 	viper.BindPFlag("num-parts", rootCmd.PersistentFlags().Lookup("num-parts"))
+	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 
-	logger, err := zap.NewDevelopment()
+	// logger, err := zap.NewDevelopment()
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer logger.Sync() // Flushes buffer, if any
+	// log = logger.Sugar()
+}
+
+func initLogger(verbose bool) {
+	var cfg zap.Config
+	if verbose {
+		cfg = zap.NewDevelopmentConfig() // More verbose logging
+	} else {
+		cfg = zap.NewProductionConfig() // Only INFO level and above
+	}
+
+	logger, err := cfg.Build()
 	if err != nil {
 		panic(err)
 	}
@@ -176,44 +196,46 @@ func hashFile(path string) (fileHashes, error) {
 	}, nil
 }
 
-func getDownloadConfigPath() string {
+func getDownloadManifestPath() string {
 	if runtime.GOOS == "windows" {
 		user, err := user.Current()
 		if err != nil {
 			log.Fatal("Error fetching user information: ", err)
 		}
-		return filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader", ".config.json")
+		return filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader", ".file_parts_manifest.json")
 	}
-	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".config.json")
+	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".file_parts_manifest.json")
 }
 
-func saveDownloadConfig(config DownloadConfig) {
-	configPath := getDownloadConfigPath()
+func saveDownloadManifest(config DownloadManifest) {
+	log.Debugw("Initializing Application Directory")
+
+	manifestPath := getDownloadManifestPath()
 
 	// Ensure the directory exists
-	configDir := filepath.Dir(configPath)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	manifestDir := filepath.Dir(manifestPath)
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
 		log.Fatal("Error creating config directory: ", err)
 	}
 
 	// Debugging: Check if the directory was created
-	if dirExists(configDir) {
-		log.Debugw("Directory created successfully", "directory", configDir)
+	if dirExists(manifestDir) {
+		log.Debugw("Application Directory created successfully", "directory", manifestDir)
 	} else {
-		log.Warnw("Directory not found", "directory", configDir)
+		log.Warnw("Directory not found", "directory", manifestDir)
 	}
 
-	file, err := os.Create(configPath)
+	file, err := os.Create(manifestPath)
 	if err != nil {
 		log.Fatal("Error creating config file: ", err)
 	}
 	defer file.Close()
 
 	// Debugging: Check if the file was created
-	if _, err := os.Stat(configPath); err == nil {
-		log.Debugw("File created successfully", "file", configPath)
+	if _, err := os.Stat(manifestPath); err == nil {
+		log.Debugw("File created successfully", "file", manifestPath)
 	} else {
-		log.Warnw("File not found", "file", configPath)
+		log.Warnw("File not found", "file", manifestPath)
 	}
 
 	encoder := json.NewEncoder(file)
@@ -223,7 +245,7 @@ func saveDownloadConfig(config DownloadConfig) {
 
 	// On Windows, make the file hidden
 	if runtime.GOOS == "windows" {
-		cmd := fmt.Sprintf("attrib +h %s", configPath)
+		cmd := fmt.Sprintf("attrib +h %s", manifestPath)
 		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
 			log.Fatal("Error hiding config file: ", err)
 		}
@@ -249,6 +271,7 @@ func createEncryptionKey(strings []string) ([]byte, error) {
 
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
 func encryptFile(filename string, key []byte) error {
+	log.Info("Initializing ecryption of manifest file.")
 	plaintext, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -376,6 +399,9 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	hashes := make(map[string]string)
 	if len(hashFileURL) != 0 {
 		var err error
+		log.Info(
+			"Initializing HTTP request",
+		) // Add info output
 		log.Debugw(
 			"Creating HTTP request for URL",
 			"URL", hashFileURL,
@@ -390,18 +416,13 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 		log.Fatal("URL is required")
 	}
 
-	log.Debugw(
-		"Creating HTTP request for URL",
-		"URL", urlFile,
-	) // Add debug output
-
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout: 60 * time.Second,
 		},
 	}
 
-	log.Debug("Performing HTTP request") // Add debug output
+	log.Info("Performing HTTP request") // Add debug output
 
 	req, err := http.NewRequest("HEAD", urlFile, nil)
 	if err != nil {
@@ -440,7 +461,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 		log.Fatal("Invalid Content-Length received from server")
 	}
 
-	log.Debug("Starting download")
+	log.Info("Starting download")
 
 	var wg sync.WaitGroup
 	wg.Add(numParts)
@@ -462,7 +483,8 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	fileName := path.Base(parsedURL.Path)
 
 	// Create and initialize the download config
-	downloadConfig := DownloadConfig{
+	downloadManifest := DownloadManifest{
+		Version:  "1.0",
 		UUID:     uuid.New().String(),
 		Filename: fileName,
 		URL:      urlFile,
@@ -470,7 +492,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 		HashType: hashType,
 	}
 
-	log.Debugw("Inititalizing download config", "downloadConfig", downloadConfig) // Add debug output
+	log.Debugw("Inititalizing download manifest", "downloadManifest", downloadManifest) // Add debug output
 
 	outFile, err := os.Create(fileName)
 	if err != nil {
@@ -533,20 +555,23 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 
 			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
+			log.Info(
+				"Writing to manifest file",
+			)
 			log.Debugw(
-				"Writing to file: ",
+				"Part file: ",
 				"sha256 hash file", sha256HashString,
 				"timestamp", timestamp,
 			) // Print the md5 hash string and the timestamp being written. Debug output
 
 			// Add downloaded part info to the download config
-			downloadConfig.DownloadedParts = append(downloadConfig.DownloadedParts, DownloadedPart{
+			downloadManifest.DownloadedParts = append(downloadManifest.DownloadedParts, DownloadedPart{
 				PartNumber: i + 1,
 				FileHash:   sha256HashString,
 				Timestamp:  timestamp,
 			})
 
-			log.Debugw("Appenging part files metadata in download config", "downloadConfig", downloadConfig) // Add debug output
+			log.Debugw("Appending part files metadata into download manifest", "downloadManifest", downloadManifest) // Add debug output
 
 			outFilePart, err := os.Create(fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp))
 			if err != nil {
@@ -584,7 +609,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	wg.Wait()
 
 	// Saving the download config
-	saveDownloadConfig(downloadConfig)
+	saveDownloadManifest(downloadManifest)
 
 	// Obtain the encryption key
 	key, err := createEncryptionKey(partFilesHashes)
@@ -594,32 +619,32 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	}
 
 	// Encrypt the download config
-	configPath := getDownloadConfigPath()
-	err = encryptFile(configPath, key)
+	manifestPath := getDownloadManifestPath()
+	err = encryptFile(manifestPath, key)
 	if err != nil {
 		log.Fatal("Error:", err)
 		return
 	}
 
 	// Decrypt the download config
-	err = decryptFile(configPath+".enc", key)
+	err = decryptFile(manifestPath+".enc", key)
 	if err != nil {
 		log.Fatal("Error:", err)
 		return
 	}
 
-	// Read the .config.json file
-	configFile, err := os.Open(configPath)
+	// Read the .file_parts_manifest.json file
+	configFile, err := os.Open(manifestPath)
 	if err != nil {
-		log.Fatal("Error opening .config.json: ", err)
+		log.Fatal("Error opening .file_parts_manifest.json: ", err)
 	}
 	defer configFile.Close()
 
 	// Decode the JSON content into a map
-	var config DownloadConfig // The JSON structure defined above as DownloadConfig
+	var config DownloadManifest // The JSON structure defined above as DownloadManifest
 	decoder := json.NewDecoder(configFile)
 	if err := decoder.Decode(&config); err != nil {
-		log.Fatal("Error decoding .config.json: ", err)
+		log.Fatal("Error decoding .file_parts_manifest.json: ", err)
 	}
 
 	// Search for all output-* files in the current directory 
@@ -639,7 +664,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 			log.Fatal("Error calculating hash: ", err)
 		}
 
-		// Get the part numbers from the .config.json file
+		// Get the part numbers from the .file_parts_manifest.json file
 		numI, numJ := -1, -1
 		for _, part := range config.DownloadedParts {
 			if part.FileHash == hashI {
@@ -680,7 +705,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 		os.Remove(file)
 	}
 
-	log.Debug("File downloaded and assembled")
+	log.Info("File downloaded and assembled")
 
 
 	fileHash, err := hashFile(fileName)
@@ -696,13 +721,13 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	)  // Print file hashes. Debug output
 
 	if hashType == "strong" && (etag == fileHash.md5 || etag == fileHash.sha1 || etag == fileHash.sha256) {
-		log.Debug("File hash matches Etag")
+		log.Info("File hash matches Etag")
 	} else if hashType == "weak" && strings.HasPrefix(etag, fileHash.md5) {
-		log.Debug("File hash matches Etag")
+		log.Info("File hash matches Etag")
 	} else if hashType == "unknown" {
-		log.Debug("Unknown Etag format, cannot check hash")
+		log.Info("Unknown Etag format, cannot check hash")
 	} else {
-		log.Debug("File hash does not match Etag")
+		log.Info("File hash does not match Etag")
 	}
 
 	etagFile, err := generateETag(fileName)
@@ -722,9 +747,9 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	if hash, ok := hashes[fileName]; ok {
 		// if hash != fileHash.md5 && hash != fileHash.sha1 && hash != fileHash.sha256 {
 		if hash != fileHash.sha256 {
-			log.Debug("File hash does not match hash from hash file")
+			log.Info("File hash does not match hash from hash file")
 		} else {
-			log.Debug("File hash matches hash from hash file")
+			log.Info("File hash matches hash from hash file")
 		}
 	}
 }
@@ -733,6 +758,7 @@ func execute(cmd *cobra.Command, args []string) {
 	if urlFile == "" {
 		log.Fatal("Error: the --url flag is required")
 	}
+	initLogger(verbose) // Call this before calling run
 	run(maxConcurrentConnections, hashFileURL, urlFile, numParts)
 }
 
