@@ -59,7 +59,7 @@ type fileHashes struct {
 	sha256 string
 }
 
-// Adding a new structure to represent the JSON configuration
+// Adding a new structure to represent the JSON manifest
 type DownloadManifest struct {
 	UUID             string                `json:"uuid"`
 	Version		  	 string                `json:"version"`
@@ -93,13 +93,6 @@ authenticity of the downloaded file.`)
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
 	viper.BindPFlag("num-parts", rootCmd.PersistentFlags().Lookup("num-parts"))
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
-
-	// logger, err := zap.NewDevelopment()
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer logger.Sync() // Flushes buffer, if any
-	// log = logger.Sugar()
 }
 
 func initLogger(verbose bool) {
@@ -140,7 +133,6 @@ func downloadAndParseHashFile() (map[string]string, error) {
 			"parts", parts,
 		) // Add debug output
 		if len(parts) != 2 {
-			// return nil, fmt.Errorf("Invalid line in hash file: %s", line)
 			continue
 		}
 
@@ -207,7 +199,7 @@ func getDownloadManifestPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".file_parts_manifest.json")
 }
 
-func saveDownloadManifest(config DownloadManifest) {
+func saveDownloadManifest(manifest DownloadManifest) {
 	log.Debugw("Initializing Application Directory")
 
 	manifestPath := getDownloadManifestPath()
@@ -219,15 +211,25 @@ func saveDownloadManifest(config DownloadManifest) {
 	}
 
 	// Debugging: Check if the directory was created
-	if dirExists(manifestDir) {
+	if pathExists(manifestDir) {
 		log.Debugw("Application Directory created successfully", "directory", manifestDir)
 	} else {
 		log.Warnw("Directory not found", "directory", manifestDir)
 	}
 
+	if pathExists(manifestPath) {
+		log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
+		err := os.Remove(manifestPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Warnw("Manifest file not found", "file: ", manifestPath)
+	}
+
 	file, err := os.Create(manifestPath)
 	if err != nil {
-		log.Fatal("Error creating config file: ", err)
+		log.Fatal("Error creating manifest file: ", err)
 	}
 	defer file.Close()
 
@@ -239,15 +241,15 @@ func saveDownloadManifest(config DownloadManifest) {
 	}
 
 	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(config); err != nil {
-		log.Fatal("Error encoding config JSON: ", err)
+	if err := encoder.Encode(manifest); err != nil {
+		log.Fatal("Error encoding manifest JSON: ", err)
 	}
 
 	// On Windows, make the file hidden
 	if runtime.GOOS == "windows" {
 		cmd := fmt.Sprintf("attrib +h %s", manifestPath)
 		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
-			log.Fatal("Error hiding config file: ", err)
+			log.Fatal("Error hiding manifest file: ", err)
 		}
 	}
 }
@@ -321,27 +323,27 @@ func encryptFile(filename string, key []byte) error {
 	return nil
 }
 
-func decryptFile(encryptedFilename string, key []byte) error {
+func decryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
 	encryptedFile, err := os.Open(encryptedFilename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer encryptedFile.Close()
 
 	iv := make([]byte, aes.BlockSize)
 	_, err = encryptedFile.Read(iv)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ciphertext, err := io.ReadAll(encryptedFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	decrypter := cipher.NewCBCDecrypter(block, iv)
@@ -351,24 +353,28 @@ func decryptFile(encryptedFilename string, key []byte) error {
 	paddingLength := int(plaintext[len(plaintext)-1])
 	plaintext = plaintext[:len(plaintext)-paddingLength]
 
-	// decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc") + ".dec"
-	decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc")
-	decryptedFile, err := os.Create(decryptedFilename)
-	if err != nil {
-		return err
+	if toDisk {
+		decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc")
+		decryptedFile, err := os.Create(decryptedFilename)
+		if err != nil {
+			return nil, err
+		}
+		defer decryptedFile.Close()
+
+		_, err = decryptedFile.Write(plaintext)
+		if err != nil {
+			return nil, err
+		}
+
+		log.Debugw("File decrypted successfully and saved as:",
+			"decryptedFilename", decryptedFilename,
+		)
+
+		return nil, nil
+
+	} else {
+		return plaintext, nil
 	}
-	defer decryptedFile.Close()
-
-	_, err = decryptedFile.Write(plaintext)
-	if err != nil {
-		return err
-	}
-
-	log.Debugw("File decrypted successfully and saved as:",
-		"decryptedFilename", decryptedFilename,
-	)
-
-	return nil
 }
 
 // Function to calculate the SHA-256 hash of a file
@@ -387,13 +393,10 @@ func calculateSHA256(filename string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func dirExists(path string) bool {
-    stat, err := os.Stat(path)
-    if err != nil {
- 	   return false
-    }
-    return stat.IsDir()
-} 
+func pathExists(path string) bool {
+    _, err := os.Stat(path)
+    return !os.IsNotExist(err)
+}
 
 func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numParts int){
 	hashes := make(map[string]string)
@@ -482,7 +485,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	// Get the file name from the URL
 	fileName := path.Base(parsedURL.Path)
 
-	// Create and initialize the download config
+	// Create and initialize the download manifest
 	downloadManifest := DownloadManifest{
 		Version:  "1.0",
 		UUID:     uuid.New().String(),
@@ -502,9 +505,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 
 	partFilesHashes := make([]string, numParts)
 
-	// if maxConcurrentConnections != 0 {
 	sem := make(chan struct{}, maxConcurrentConnections) // maxConcurrentConnections is the limit you set
-	// }
 
 	for i := 0; i < numParts; i++ {
 		if maxConcurrentConnections != 0 {
@@ -564,14 +565,14 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 				"timestamp", timestamp,
 			) // Print the md5 hash string and the timestamp being written. Debug output
 
-			// Add downloaded part info to the download config
+			// Add downloaded part info to the download manifest
 			downloadManifest.DownloadedParts = append(downloadManifest.DownloadedParts, DownloadedPart{
 				PartNumber: i + 1,
 				FileHash:   sha256HashString,
 				Timestamp:  timestamp,
 			})
 
-			log.Debugw("Appending part files metadata into download manifest", "downloadManifest", downloadManifest) // Add debug output
+			log.Debugw("Appending part file metadata into download manifest", "downloadManifest", downloadManifest) // Add debug output
 
 			outFilePart, err := os.Create(fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp))
 			if err != nil {
@@ -608,7 +609,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 
 	wg.Wait()
 
-	// Saving the download config
+	// Saving the download manifest
 	saveDownloadManifest(downloadManifest)
 
 	// Obtain the encryption key
@@ -618,34 +619,41 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 		return
 	}
 
-	// Encrypt the download config
+	// Encrypt the download manifest
 	manifestPath := getDownloadManifestPath()
+
+	// Before encrypting the manifest file, check if the encrypted file exists and delete it
+	if pathExists(manifestPath + ".enc") {
+		log.Debugw("Encrypted manifest file exists. Deleting:", "file", manifestPath + ".enc")
+		err := os.Remove(manifestPath + ".enc")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	err = encryptFile(manifestPath, key)
 	if err != nil {
 		log.Fatal("Error:", err)
 		return
 	}
 
-	// Decrypt the download config
-	err = decryptFile(manifestPath+".enc", key)
+	// Decrypt the download manifest
+	var decryptedContent []byte
+	decryptedContent, err = decryptFile(manifestPath + ".enc", key, false)
 	if err != nil {
 		log.Fatal("Error:", err)
 		return
 	}
 
-	// Read the .file_parts_manifest.json file
-	configFile, err := os.Open(manifestPath)
-	if err != nil {
-		log.Fatal("Error opening .file_parts_manifest.json: ", err)
-	}
-	defer configFile.Close()
-
 	// Decode the JSON content into a map
-	var config DownloadManifest // The JSON structure defined above as DownloadManifest
-	decoder := json.NewDecoder(configFile)
-	if err := decoder.Decode(&config); err != nil {
-		log.Fatal("Error decoding .file_parts_manifest.json: ", err)
+	var manifest DownloadManifest // The JSON structure defined above as DownloadManifest
+	err = json.Unmarshal(decryptedContent, &manifest)
+	if err != nil {
+		log.Fatal("Error decoding decrypted content: ", err)
 	}
+
+	// Clean memory after decoding content
+	decryptedContent = nil
 
 	// Search for all output-* files in the current directory 
 	//	to proceed to assemble the final file
@@ -666,7 +674,7 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 
 		// Get the part numbers from the .file_parts_manifest.json file
 		numI, numJ := -1, -1
-		for _, part := range config.DownloadedParts {
+		for _, part := range manifest.DownloadedParts {
 			if part.FileHash == hashI {
 				numI = part.PartNumber
 			}
@@ -702,7 +710,11 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 		}
 
 		outFilePart.Close()
-		os.Remove(file)
+		// Remove manifest file and leave only the encrypted one
+		err = os.Remove(file)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	log.Info("File downloaded and assembled")
