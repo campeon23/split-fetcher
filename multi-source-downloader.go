@@ -76,18 +76,19 @@ type DownloadedPart struct {
 
 func init() {
 	// cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "connections", "c", 0, `(Optional) Controls how many parts of the 
+	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "max-connections", "m", 0, `(Optional) Controls how many parts of the 
 file are downloaded at the same time. You can set a specific number, 
 or if you set it to 0, it will choose the best number for you.`)
-	rootCmd.PersistentFlags().StringVarP(&hashFileURL, "hashes", "s", "", `(Optional) The URL of the file containing the hashes refers to a file 
+	rootCmd.PersistentFlags().StringVarP(&hashFileURL, "integrity-hashes", "i", "", `(Optional) The URL of the file containing the hashes refers to a file 
 with either MD5 or SHA-256 hashes, used to verify the integrity and 
 authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&urlFile, "url", "u", "", "URL of the file to download")
-	rootCmd.PersistentFlags().IntVarP(&numParts, "n", "n", 5, "(Optional) Number of parts to split the download into")
+	rootCmd.PersistentFlags().IntVarP(&numParts, "num-parts", "n", 5, "(Optional) Number of parts to split the download into")
 
-	viper.BindPFlag("hashes", rootCmd.PersistentFlags().Lookup("hashes"))
+	viper.BindPFlag("max-connections", rootCmd.PersistentFlags().Lookup("max-connections"))
+	viper.BindPFlag("integrity-hashes", rootCmd.PersistentFlags().Lookup("integrity-hashes"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
-	viper.BindPFlag("n", rootCmd.PersistentFlags().Lookup("n"))
+	viper.BindPFlag("num-parts", rootCmd.PersistentFlags().Lookup("num-parts"))
 
 	logger, err := zap.NewDevelopment()
 	if err != nil {
