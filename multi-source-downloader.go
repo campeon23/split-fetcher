@@ -35,7 +35,7 @@ import (
 
 var (
 	maxConcurrentConnections 	int
-	hashFileURL 				string
+	shaSumsURL 				string
 	urlFile  					string
 	numParts 					int
 	verbose 					bool
@@ -81,7 +81,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "max-connections", "m", 0, `(Optional) Controls how many parts of the 
 file are downloaded at the same time. You can set a specific number, 
 or if you set it to 0, it will choose the best number for you.`)
-	rootCmd.PersistentFlags().StringVarP(&hashFileURL, "integrity-hashes", "i", "", `(Optional) The URL of the file containing the hashes refers to a file 
+	rootCmd.PersistentFlags().StringVarP(&shaSumsURL, "sha-sums", "s", "", `(Optional) The URL of the file containing the hashes refers to a file 
 with either MD5 or SHA-256 hashes, used to verify the integrity and 
 authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&urlFile, "url", "u", "", "URL of the file to download")
@@ -89,7 +89,7 @@ authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "(Optional) Output verbose logging (INFO and Debug), verbose not passed only output INFO logging.")
 
 	viper.BindPFlag("max-connections", rootCmd.PersistentFlags().Lookup("max-connections"))
-	viper.BindPFlag("integrity-hashes", rootCmd.PersistentFlags().Lookup("integrity-hashes"))
+	viper.BindPFlag("sha-sums", rootCmd.PersistentFlags().Lookup("sha-sums"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
 	viper.BindPFlag("num-parts", rootCmd.PersistentFlags().Lookup("num-parts"))
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
@@ -112,7 +112,7 @@ func initLogger(verbose bool) {
 }
 
 func downloadAndParseHashFile() (map[string]string, error) {
-	resp, err := http.Get(hashFileURL)
+	resp, err := http.Get(shaSumsURL)
 	if err != nil {
 		return nil, err
 	}
@@ -149,22 +149,6 @@ func downloadAndParseHashFile() (map[string]string, error) {
 
 	return hashes, nil
 }
-
-func generateETag(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hash := md5.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
 
 func hashFile(path string) (fileHashes, error) {
 	file, err := os.Open(path)
@@ -217,6 +201,7 @@ func saveDownloadManifest(manifest DownloadManifest) {
 		log.Warnw("Directory not found", "directory", manifestDir)
 	}
 
+	// Before saving the manifest file, check if the file exists and delete it
 	if pathExists(manifestPath) {
 		log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
 		err := os.Remove(manifestPath)
@@ -224,7 +209,7 @@ func saveDownloadManifest(manifest DownloadManifest) {
 			log.Fatal(err)
 		}
 	} else {
-		log.Warnw("Manifest file not found", "file: ", manifestPath)
+		log.Infow("Manifest file not found", "file: ", manifestPath)
 	}
 
 	file, err := os.Create(manifestPath)
@@ -398,16 +383,16 @@ func pathExists(path string) bool {
     return !os.IsNotExist(err)
 }
 
-func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numParts int){
+func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int){
 	hashes := make(map[string]string)
-	if len(hashFileURL) != 0 {
+	if len(shaSumsURL) != 0 {
 		var err error
 		log.Info(
 			"Initializing HTTP request",
 		) // Add info output
 		log.Debugw(
 			"Creating HTTP request for URL",
-			"URL", hashFileURL,
+			"URL", shaSumsURL,
 		) // Add debug output
 		hashes, err = downloadAndParseHashFile()
 		if err != nil {
@@ -510,6 +495,8 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 	for i := 0; i < numParts; i++ {
 		if maxConcurrentConnections != 0 {
 			sem <- struct{}{} // acquire a token
+		} else {
+			log.Debugw("Max concurrent connections not set. Downloading all parts at once.")
 		}
 		go func(i int) {
 			defer wg.Done()
@@ -572,7 +559,11 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 				Timestamp:  timestamp,
 			})
 
-			log.Debugw("Appending part file metadata into download manifest", "downloadManifest", downloadManifest) // Add debug output
+			log.Debugw("Appending part file metadata into download manifest", 
+				"part number", i + 1,
+				"file hash string", sha256HashString,
+				"timestamp", timestamp,
+			) // Add debug output
 
 			outFilePart, err := os.Create(fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp))
 			if err != nil {
@@ -727,42 +718,28 @@ func run(maxConcurrentConnections int, hashFileURL string, urlFile string, numPa
 
 	log.Debugw(
 		"File Hashes", 
-		"MD5",    fileHash.md5,
-		"SHA1",   fileHash.sha1,
-		"SHA256", fileHash.sha256,
+		"File",   			fileName,
+		"sha SUMS hash",   	hashes[fileName],
+		"MD5",    			fileHash.md5,
+		"SHA1",   			fileHash.sha1,
+		"SHA256", 			fileHash.sha256,
 	)  // Print file hashes. Debug output
 
+	// Validate the assembled file integrity and authenticity
 	if hashType == "strong" && (etag == fileHash.md5 || etag == fileHash.sha1 || etag == fileHash.sha256) {
-		log.Info("File hash matches Etag")
+		log.Info("File hash matches Etag obtained from server (strong hash)")
 	} else if hashType == "weak" && strings.HasPrefix(etag, fileHash.md5) {
-		log.Info("File hash matches Etag")
+		log.Info("File hash matches Etag obtained from server (weak hash))")
 	} else if hashType == "unknown" {
 		log.Info("Unknown Etag format, cannot check hash")
+	} else if hash, ok := hashes[fileName]; ok {
+		if hash == fileHash.sha256 {
+			log.Info("File hash matches hash from SHA sums file")
+		} else {
+			log.Info("File hash does not match hash from SHA sums file")
+		}
 	} else {
 		log.Info("File hash does not match Etag")
-	}
-
-	etagFile, err := generateETag(fileName)
-	if err != nil {
-		panic(err)
-	}
-
-	log.Debugw(
-		"File Hashes", 
-		"File",   	fileName,
-		"Hash",   	hashes[fileName],
-		"SHA256", 	fileHash.sha256,
-		"ETag",		etagFile,
-	)  // Print file hashes. Debug output
-
-	// Check if the file hash matches the one in the hash file
-	if hash, ok := hashes[fileName]; ok {
-		// if hash != fileHash.md5 && hash != fileHash.sha1 && hash != fileHash.sha256 {
-		if hash != fileHash.sha256 {
-			log.Info("File hash does not match hash from hash file")
-		} else {
-			log.Info("File hash matches hash from hash file")
-		}
 	}
 }
 
@@ -771,7 +748,7 @@ func execute(cmd *cobra.Command, args []string) {
 		log.Fatal("Error: the --url flag is required")
 	}
 	initLogger(verbose) // Call this before calling run
-	run(maxConcurrentConnections, hashFileURL, urlFile, numParts)
+	run(maxConcurrentConnections, shaSumsURL, urlFile, numParts)
 }
 
 func main() {
