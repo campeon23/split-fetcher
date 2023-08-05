@@ -33,6 +33,7 @@ import (
 	"github.com/spf13/viper"
 
 	// "go.uber.org/zap"
+	"github.com/campeon23/multi-source-downloader/logger"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -442,6 +443,7 @@ var bufferPool = &sync.Pool{
 }
 
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int){
+	log := logger.InitLogger(true)
 	hashes := make(map[string]string)
 	if len(shaSumsURL) != 0 {
 		var err error
