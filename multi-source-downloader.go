@@ -24,9 +24,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gosuri/uiprogress"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -35,7 +37,7 @@ import (
 
 var (
 	maxConcurrentConnections 	int
-	shaSumsURL 				string
+	shaSumsURL 					string
 	urlFile  					string
 	numParts 					int
 	verbose 					bool
@@ -74,6 +76,11 @@ type DownloadedPart struct {
 	PartNumber int    `json:"part_number"`
 	FileHash   string `json:"file_hash"`
 	Timestamp  int64  `json:"timestamp"`
+}
+
+type progressWriter struct {
+	bar *uiprogress.Bar
+	w   io.Writer
 }
 
 func init() {
@@ -383,6 +390,56 @@ func pathExists(path string) bool {
     return !os.IsNotExist(err)
 }
 
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	pw.bar.Set(pw.bar.Current() + n)
+	return pw.w.Write(p)
+}
+
+func formatFileSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func formatPercentage(current, total int64) string {
+	percentage := float64(current) / float64(total) * 100
+	return fmt.Sprintf("%.1f%%", percentage)
+}
+
+func formatSpeed(bytes int64, totalMilliseconds int64) string {
+	if totalMilliseconds == 0 {
+		totalMilliseconds = 1
+	}
+	speed := float64(bytes) / (float64(totalMilliseconds) / float64(1000*1000)) // B/s
+	const unit = 1024
+
+	if speed < unit {
+		return fmt.Sprintf("| %.2f B/s", speed)
+	}
+	div, exp := unit, 0
+	for n := speed / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	unitPrefix := fmt.Sprintf("%ciB/s", "KMGTPE"[exp])
+	return fmt.Sprintf("| %.2f %s", speed/float64(div), unitPrefix)
+}
+
+// Define a buffer pool globally to reuse buffers
+var bufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 4096) // Fixed buffer size for efficient memory usage
+	},
+}
+
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int){
 	hashes := make(map[string]string)
 	if len(shaSumsURL) != 0 {
@@ -488,39 +545,80 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	}
 	defer outFile.Close()
 
+	// Calculate the maximum length of the filenames
+	maxProgressFileNameLen := 0
+	var speed atomic.Value // Atomic value to handle concurrent access to speed
+	speed.Store("")        // Initialize the speed variable
+
+	// Create a new UI progress bar and start it
+	uiprogress.Start()
+	progressBars := make([]*uiprogress.Bar, numParts)
 	partFilesHashes := make([]string, numParts)
 
 	sem := make(chan struct{}, maxConcurrentConnections) // maxConcurrentConnections is the limit you set
 
+	if maxConcurrentConnections == 0 {
+		log.Debugw("Max concurrent connections not set. Downloading all parts at once.")
+	}
+
 	for i := 0; i < numParts; i++ {
-		if maxConcurrentConnections != 0 {
-			sem <- struct{}{} // acquire a token
-		} else {
-			log.Debugw("Max concurrent connections not set. Downloading all parts at once.")
-		}
 		go func(i int) {
+			if maxConcurrentConnections != 0 {
+				sem <- struct{}{} // acquire a token
+				defer func() { <-sem }() // release the token
+			}
+
 			defer wg.Done()
 
-			// Add delay before starting each goroutine
-			time.Sleep(time.Duration(i) * time.Second)
+			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
-			start := i * rangeSize
-			end := start + rangeSize - 1
-			if i == numParts-1 {
-				end = size - 1
+			progressFileName := fmt.Sprintf("output part %d", i+1)
+			outputPartFileName := fmt.Sprintf("output-%d.part", i+1)
+			outputPartFile, err := os.Create(outputPartFileName)
+			if err != nil {
+				log.Fatal("Error: ", err)
 			}
+			defer outputPartFile.Close()
+
+			if len(progressFileName) > maxProgressFileNameLen {
+				maxProgressFileNameLen = len(progressFileName)
+			}
+
+			// Create a progress bar
+			bar := uiprogress.AddBar(rangeSize).PrependElapsed()
+
+			// var speed string
+			
+			// Set the progress bar details
+			bar.PrependFunc(func(b *uiprogress.Bar) string {
+				return fmt.Sprintf("%-*s | %s | %s", maxProgressFileNameLen, progressFileName, formatFileSize(int64(b.Current())), formatFileSize(int64(rangeSize)))
+			})
+			bar.AppendFunc(func(b *uiprogress.Bar) string {
+				return fmt.Sprintf("%s %s", formatPercentage(int64(b.Current()), int64(rangeSize)), speed.Load().(string))
+			})
+
+			// Save this progress bar in the progressBars slice
+			progressBars[i] = bar
+
+			startLength := i * rangeSize
+			endLength := startLength + rangeSize - 1
+			if i == numParts - 1 {
+				endLength = size - 1
+			}
+
+			totalSize := endLength - startLength + 1
 
 			req, err := http.NewRequest("GET", urlFile, nil)
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
 
-			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", startLength, endLength))
 
 			log.Debugw(
 				"Downloading range Start to End", 
-				"Start", start,
-				"End",	 end,
+				"Start", startLength,
+				"End",	 endLength,
 			) // Add debug output
 
 			resp, err := client.Do(req) // Use the custom client
@@ -529,28 +627,94 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 			}
 			defer resp.Body.Close()
 
-			buf := make([]byte, int64(end-start+1))
-			reader := io.LimitReader(resp.Body, int64(end-start+1))
-			_, err = io.ReadFull(reader, buf)
+			buf := bufferPool.Get().([]byte) // Get a buffer from the pool
+			defer func() { 
+				bufferPool.Put(buf) 
+			}() // Return the buffer to the pool when done
+
+			reader := io.LimitReader(resp.Body, int64(totalSize))
+
+			// Create a custom writer to track the progress
+			writer := &progressWriter{
+				bar: bar,
+				w:   outputPartFile,
+			}
+
+			totalBytesDownloaded := int64(0)
+			totalElapsedMilliseconds := int64(0)
+
+			startTime := time.Now() // record start time of reading chunk
+			for {
+				bytesRead, err := reader.Read(buf)
+				if bytesRead > 0 {
+					_, err := writer.Write(buf[:bytesRead])
+					if err != nil {
+						log.Fatal("Error: ", err)
+					}
+
+					// calculate elapsed time and add to total
+					elapsed := time.Since(startTime)
+					totalElapsedMilliseconds += elapsed.Microseconds()
+
+					// add bytes downloaded to total
+					totalBytesDownloaded += int64(bytesRead)
+
+					// update progress bar
+					bar.Set(int(totalBytesDownloaded)) // update the progress bar to the current total bytes downloaded
+				}
+
+				// handle end or error
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					log.Fatal("Error: ", err)
+				}
+				startTime = time.Now() // reset start time after processing the chunk
+				currentSpeed := formatSpeed(totalBytesDownloaded, totalElapsedMilliseconds)
+				speed.Store(currentSpeed)
+			}
+
+			// Close and reopen the file to calculate the hash
+			outputPartFile.Close()
+			outputPartFile, err = os.Open(outputPartFileName)
 			if err != nil {
 				log.Fatal("Error: ", err)
 			}
+			defer outputPartFile.Close()
 
-			sha256Hash := sha256.Sum256(buf)
+			// Calculate the hash from the temporary part file
+			h := sha256.New()
+			if _, err := io.Copy(h, outputPartFile); err != nil {
+				log.Fatal("Error: ", err)
+			}
+			sha256Hash := h.Sum(nil)
 			sha256HashString := hex.EncodeToString(sha256Hash[:])
+			partFilesHashes[i] = sha256HashString
 
-			partFilesHashes[i] = hex.EncodeToString(sha256Hash[:])
+			// Close the file before renaming
+			outputPartFile.Close()
 
-			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
+			// Rename the temporary part file
+			partFileName := fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp)
+			if err := os.Rename(outputPartFileName, partFileName); err != nil {
+				log.Fatal("Error: ", err)
+			}
+
+			// Reopen the file under the new name
+			outputPartFile, err = os.OpenFile(partFileName, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				log.Fatal("Error: ", err)
+			}
+			defer outputPartFile.Close()
+
+			if totalBytesDownloaded != int64(totalSize) {
+				log.Fatal("Error: expected to read more bytes")
+			}
 
 			log.Info(
 				"Writing to manifest file",
 			)
-			log.Debugw(
-				"Part file: ",
-				"sha256 hash file", sha256HashString,
-				"timestamp", timestamp,
-			) // Print the md5 hash string and the timestamp being written. Debug output
 
 			// Add downloaded part info to the download manifest
 			downloadManifest.DownloadedParts = append(downloadManifest.DownloadedParts, DownloadedPart{
@@ -559,46 +723,21 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 				Timestamp:  timestamp,
 			})
 
-			log.Debugw("Appending part file metadata into download manifest", 
-				"part number", i + 1,
-				"file hash string", sha256HashString,
-				"timestamp", timestamp,
-			) // Add debug output
-
-			outFilePart, err := os.Create(fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp))
-			if err != nil {
-				log.Fatal("Error: ", err)
-			}
-			defer outFilePart.Close()
-
-			_, err = outFilePart.Write(buf)
-			if err != nil {
-				log.Fatal("Error: ", err)
-			}
-
 			log.Debugw(
 				"Downloaded part",
 				"part file",			i+1,
 				"sha256 hash string", 	sha256HashString, 
 				"timestamp", 			timestamp,
-				"filename", 			outFilePart.Name(),
+				"filename", 			outputPartFile.Name(),
 			) // Print the part being downloaded. Debug output
-
-			if maxConcurrentConnections != 0 {
-				<-sem // release the token
-			}
 
 		}(i)
 	}
 
-	if maxConcurrentConnections != 0 {
-		// wait for all tokens to be released
-		for i := 0; i < maxConcurrentConnections; i++ {
-			sem <- struct{}{}
-		}
-	}
-
 	wg.Wait()
+
+	// Stop the progress bar after all downloads are complete
+	uiprogress.Stop()
 
 	// Saving the download manifest
 	saveDownloadManifest(downloadManifest)
@@ -686,21 +825,23 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 			"part file",	i+1,
 			"file", 		file,
 		) // Print the part being assembled. Debug output
-		outFilePart, err := os.Open(file)
+		partFile, err := os.Open(file)
 		if err != nil {
 			log.Fatal("Error: ", err)
 		}
 
-		copied, err := io.Copy(outFile, outFilePart)
+		copied, err := io.Copy(outFile, partFile)
 		if err != nil {
 			log.Fatal("Error: ", err)
 		}
 
-		if copied != int64(rangeSize) && i != numParts-1 {
+		if i != numParts-1 && copied != int64(rangeSize) {
 			log.Fatal("Error: File part not completely copied")
+		} else if i == numParts-1 && copied != int64(size)-int64(rangeSize)*int64(numParts-1) {
+			log.Fatal("Error: Last file part not completely copied")
 		}
 
-		outFilePart.Close()
+		partFile.Close()
 		// Remove manifest file and leave only the encrypted one
 		err = os.Remove(file)
 		if err != nil {
