@@ -1,8 +1,32 @@
 package utils
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+	"sync"
 
-func formatFileSize(bytes int64) string {
+	"github.com/gosuri/uiprogress"
+)
+
+// Define a buffer pool globally to reuse buffers
+var BufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 4096) // Fixed buffer size for efficient memory usage
+	},
+}
+
+type ProgressWriter struct {
+	Bar *uiprogress.Bar
+	W   io.Writer
+}
+
+func (pw *ProgressWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	pw.Bar.Set(pw.Bar.Current() + n)
+	return pw.W.Write(p)
+}
+
+func FormatFileSize(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
 		return fmt.Sprintf("%d B", bytes)
@@ -15,12 +39,12 @@ func formatFileSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-func formatPercentage(current, total int64) string {
+func FormatPercentage(current, total int64) string {
 	percentage := float64(current) / float64(total) * 100
 	return fmt.Sprintf("%.1f%%", percentage)
 }
 
-func formatSpeed(bytes int64, totalMilliseconds int64) string {
+func FormatSpeed(bytes int64, totalMilliseconds int64) string {
 	if totalMilliseconds == 0 {
 		totalMilliseconds = 1
 	}

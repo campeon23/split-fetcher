@@ -5,23 +5,36 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/campeon23/multi-source-downloader/logger"
 )
 
-var (
-	shaSumsURL 					string
-)
-
-type fileHashes struct {
-	md5    string
-	sha1   string
-	sha256 string
+type Hasher struct {
+	Log	*logger.Logger
 }
 
-func downloadAndParseHashFile() (map[string]string, error) {
+type fileHashes struct {
+	Md5    string
+	Sha1   string
+	Sha256 string
+}
+
+func NewHasher(log *logger.Logger) *Hasher {
+	return &Hasher{
+		Log: log,
+	}
+}
+
+func (h *Hasher) DownloadAndParseHashFile(shaSumsURL string) (map[string]string, error) {
+	if h.Log == nil {
+		fmt.Println("Error: Logger not initialized in hasher!")
+		return nil, fmt.Errorf("logger not initialized in hasher")
+	}
 	resp, err := http.Get(shaSumsURL)
 	if err != nil {
 		return nil, err
@@ -37,7 +50,7 @@ func downloadAndParseHashFile() (map[string]string, error) {
 	hashes := make(map[string]string)
 	for _, line := range lines {
 		parts := strings.SplitN(line, "*", 2)
-		log.Debugw(
+		h.Log.Debugw(
 			"Parsing content from hashes file.", 
 			"lenght", len(parts), 
 			"parts", parts,
@@ -52,7 +65,7 @@ func downloadAndParseHashFile() (map[string]string, error) {
 		hashes[fileName] = hash
 	}
 
-	log.Debugw(
+	h.Log.Debugw(
 		"Obtaining hashes from file.", 
 		"hashes", hashes,
 	) // Add debug output
@@ -60,7 +73,7 @@ func downloadAndParseHashFile() (map[string]string, error) {
 	return hashes, nil
 }
 
-func hashFile(path string) (fileHashes, error) {
+func HashFile(path string) (fileHashes, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return fileHashes{}, err
@@ -76,14 +89,14 @@ func hashFile(path string) (fileHashes, error) {
 	}
 
 	return fileHashes{
-		md5:    hex.EncodeToString(hMd5.Sum(nil)),
-		sha1:   hex.EncodeToString(hSha1.Sum(nil)),
-		sha256: hex.EncodeToString(hSha256.Sum(nil)),
+		Md5:    hex.EncodeToString(hMd5.Sum(nil)),
+		Sha1:   hex.EncodeToString(hSha1.Sum(nil)),
+		Sha256: hex.EncodeToString(hSha256.Sum(nil)),
 	}, nil
 }
 
 // Function to calculate the SHA-256 hash of a file
-func calculateSHA256(filename string) (string, error) {
+func CalculateSHA256(filename string) (string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return "", err

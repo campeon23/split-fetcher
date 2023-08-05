@@ -1,12 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
-	"crypto/rand"
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,11 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"os/user"
 	"path"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,9 +23,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	// "go.uber.org/zap"
+	"github.com/campeon23/multi-source-downloader/encryption"
+	"github.com/campeon23/multi-source-downloader/fileutils"
+	"github.com/campeon23/multi-source-downloader/hasher"
 	"github.com/campeon23/multi-source-downloader/logger"
-	"golang.org/x/crypto/pbkdf2"
+	"github.com/campeon23/multi-source-downloader/manifest"
+	"github.com/campeon23/multi-source-downloader/utils"
 )
 
 var (
@@ -43,7 +37,7 @@ var (
 	urlFile  					string
 	numParts 					int
 	verbose 					bool
-	// log 						*zap.SugaredLogger
+	log 						*logger.Logger // Declare at package level if you want to use the logger across different functions in this package
 )
 
 var rootCmd = &cobra.Command{
@@ -55,34 +49,6 @@ to be downloaded into n parts and downloads them concurrently in an optimized ma
 It then assembles the final file, with support for either Etag validation or Hash 
 validation, to ensure file integrity. And more things...`,
 	Run:   execute,
-}
-
-type fileHashes struct {
-	md5    string
-	sha1   string
-	sha256 string
-}
-
-// Adding a new structure to represent the JSON manifest
-type DownloadManifest struct {
-	UUID             string                `json:"uuid"`
-	Version		  	 string                `json:"version"`
-	Filename         string                `json:"filename"`
-	URL              string                `json:"url"`
-	Etag			 string                `json:"etag"`
-	HashType		 string                `json:"hash_type"`
-	DownloadedParts  []DownloadedPart      `json:"downloaded_parts"`
-}
-
-type DownloadedPart struct {
-	PartNumber int    `json:"part_number"`
-	FileHash   string `json:"file_hash"`
-	Timestamp  int64  `json:"timestamp"`
-}
-
-type progressWriter struct {
-	bar *uiprogress.Bar
-	w   io.Writer
 }
 
 func init() {
@@ -104,359 +70,24 @@ authenticity of the downloaded file.`)
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 }
 
-// func initLogger(verbose bool) {
-// 	var cfg zap.Config
-// 	if verbose {
-// 		cfg = zap.NewDevelopmentConfig() // More verbose logging
-// 	} else {
-// 		cfg = zap.NewProductionConfig() // Only INFO level and above
-// 	}
-
-// 	logger, err := cfg.Build()
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	defer logger.Sync() // Flushes buffer, if any
-// 	log = logger.Sugar()
-// }
-
-func downloadAndParseHashFile() (map[string]string, error) {
-	resp, err := http.Get(shaSumsURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	content, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	hashes := make(map[string]string)
-	for _, line := range lines {
-		parts := strings.SplitN(line, "*", 2)
-		log.Debugw(
-			"Parsing content from hashes file.", 
-			"lenght", len(parts), 
-			"parts", parts,
-		) // Add debug output
-		if len(parts) != 2 {
-			continue
-		}
-
-		hash := strings.TrimSpace(parts[0])
-		fileName := strings.TrimSpace(parts[1])
-
-		hashes[fileName] = hash
-	}
-
-	log.Debugw(
-		"Obtaining hashes from file.", 
-		"hashes", hashes,
-	) // Add debug output
-
-	return hashes, nil
-}
-
-func hashFile(path string) (fileHashes, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return fileHashes{}, err
-	}
-	defer file.Close()
-
-	hMd5 := md5.New()
-	hSha1 := sha1.New()
-	hSha256 := sha256.New()
-
-	if _, err := io.Copy(io.MultiWriter(hMd5, hSha1, hSha256), file); err != nil {
-		return fileHashes{}, err
-	}
-
-	return fileHashes{
-		md5:    hex.EncodeToString(hMd5.Sum(nil)),
-		sha1:   hex.EncodeToString(hSha1.Sum(nil)),
-		sha256: hex.EncodeToString(hSha256.Sum(nil)),
-	}, nil
-}
-
-func getDownloadManifestPath() string {
-	if runtime.GOOS == "windows" {
-		user, err := user.Current()
-		if err != nil {
-			log.Fatal("Error fetching user information: ", err)
-		}
-		return filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader", ".file_parts_manifest.json")
-	}
-	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".file_parts_manifest.json")
-}
-
-func saveDownloadManifest(manifest DownloadManifest) {
-	log.Debugw("Initializing Application Directory")
-
-	manifestPath := getDownloadManifestPath()
-
-	// Ensure the directory exists
-	manifestDir := filepath.Dir(manifestPath)
-	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		log.Fatal("Error creating config directory: ", err)
-	}
-
-	// Debugging: Check if the directory was created
-	if pathExists(manifestDir) {
-		log.Debugw("Application Directory created successfully", "directory", manifestDir)
-	} else {
-		log.Warnw("Directory not found", "directory", manifestDir)
-	}
-
-	// Before saving the manifest file, check if the file exists and delete it
-	if pathExists(manifestPath) {
-		log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
-		err := os.Remove(manifestPath)
-		if err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		log.Infow("Manifest file not found", "file: ", manifestPath)
-	}
-
-	file, err := os.Create(manifestPath)
-	if err != nil {
-		log.Fatal("Error creating manifest file: ", err)
-	}
-	defer file.Close()
-
-	// Debugging: Check if the file was created
-	if _, err := os.Stat(manifestPath); err == nil {
-		log.Debugw("File created successfully", "file", manifestPath)
-	} else {
-		log.Warnw("File not found", "file", manifestPath)
-	}
-
-	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(manifest); err != nil {
-		log.Fatal("Error encoding manifest JSON: ", err)
-	}
-
-	// On Windows, make the file hidden
-	if runtime.GOOS == "windows" {
-		cmd := fmt.Sprintf("attrib +h %s", manifestPath)
-		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
-			log.Fatal("Error hiding manifest file: ", err)
-		}
-	}
-}
-
-func createEncryptionKey(strings []string) ([]byte, error) {
-	// Sort the strings in reverse order
-	sort.Sort(sort.Reverse(sort.StringSlice(strings)))
-
-	// Concatenate the sorted strings
-	var buffer bytes.Buffer
-	for _, str := range strings {
-		buffer.WriteString(str)
-	}
-
-	// Use the concatenated string with PBKDF2 to derive a key
-	salt := []byte("your-salt") // Use a constant or random salt as needed
-	key := pbkdf2.Key([]byte(buffer.Bytes()), salt, 4096, 32, sha256.New) // Pass the buffer as a byte slice
-
-	return key, nil
-}
-
-// encryptFile encrypts the file with the given key and writes the encrypted data to a new file
-func encryptFile(filename string, key []byte) error {
-	log.Info("Initializing ecryption of manifest file.")
-	plaintext, err := os.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return err
-	}
-
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return err
-	}
-
-	encrypter := cipher.NewCBCEncrypter(block, iv)
-
-	paddingLength := aes.BlockSize - len(plaintext)%aes.BlockSize
-	padding := make([]byte, paddingLength)
-	for i := range padding {
-		padding[i] = byte(paddingLength)
-	}
-	plaintext = append(plaintext, padding...)
-
-	ciphertext := make([]byte, len(plaintext))
-	encrypter.CryptBlocks(ciphertext, plaintext)
-
-	encryptedFilename := filename + ".enc"
-	encryptedFile, err := os.Create(encryptedFilename)
-	if err != nil {
-		return err
-	}
-	defer encryptedFile.Close()
-
-	encryptedFile.Write(iv)
-	encryptedFile.Write(ciphertext)
-
-	log.Debugw("File encrypted successfully and saved as:", 
-		"encryptedFilename", encryptedFilename,
-	)
-
-	err = os.Remove(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return nil
-}
-
-func decryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
-	encryptedFile, err := os.Open(encryptedFilename)
-	if err != nil {
-		return nil, err
-	}
-	defer encryptedFile.Close()
-
-	iv := make([]byte, aes.BlockSize)
-	_, err = encryptedFile.Read(iv)
-	if err != nil {
-		return nil, err
-	}
-
-	ciphertext, err := io.ReadAll(encryptedFile)
-	if err != nil {
-		return nil, err
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	decrypter := cipher.NewCBCDecrypter(block, iv)
-	plaintext := make([]byte, len(ciphertext))
-	decrypter.CryptBlocks(plaintext, ciphertext)
-
-	paddingLength := int(plaintext[len(plaintext)-1])
-	plaintext = plaintext[:len(plaintext)-paddingLength]
-
-	if toDisk {
-		decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc")
-		decryptedFile, err := os.Create(decryptedFilename)
-		if err != nil {
-			return nil, err
-		}
-		defer decryptedFile.Close()
-
-		_, err = decryptedFile.Write(plaintext)
-		if err != nil {
-			return nil, err
-		}
-
-		log.Debugw("File decrypted successfully and saved as:",
-			"decryptedFilename", decryptedFilename,
-		)
-
-		return nil, nil
-
-	} else {
-		return plaintext, nil
-	}
-}
-
-// Function to calculate the SHA-256 hash of a file
-func calculateSHA256(filename string) (string, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-func pathExists(path string) bool {
-    _, err := os.Stat(path)
-    return !os.IsNotExist(err)
-}
-
-func (pw *progressWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	pw.bar.Set(pw.bar.Current() + n)
-	return pw.w.Write(p)
-}
-
-func formatFileSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-func formatPercentage(current, total int64) string {
-	percentage := float64(current) / float64(total) * 100
-	return fmt.Sprintf("%.1f%%", percentage)
-}
-
-func formatSpeed(bytes int64, totalMilliseconds int64) string {
-	if totalMilliseconds == 0 {
-		totalMilliseconds = 1
-	}
-	speed := float64(bytes) / (float64(totalMilliseconds) / float64(1000*1000)) // B/s
-	const unit = 1024
-
-	if speed < unit {
-		return fmt.Sprintf("| %.2f B/s", speed)
-	}
-	div, exp := unit, 0
-	for n := speed / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	unitPrefix := fmt.Sprintf("%ciB/s", "KMGTPE"[exp])
-	return fmt.Sprintf("| %.2f %s", speed/float64(div), unitPrefix)
-}
-
-// Define a buffer pool globally to reuse buffers
-var bufferPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096) // Fixed buffer size for efficient memory usage
-	},
-}
-
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int){
-	log := logger.InitLogger(true)
+	h := hasher.NewHasher(log)
+	m := manifest.NewManifest(log)
+	e := encryption.NewEncryption(log)
+
 	hashes := make(map[string]string)
 	if len(shaSumsURL) != 0 {
 		var err error
-		log.Info(
+		log.Infow(
 			"Initializing HTTP request",
 		) // Add info output
 		log.Debugw(
 			"Creating HTTP request for URL",
 			"URL", shaSumsURL,
 		) // Add debug output
-		hashes, err = downloadAndParseHashFile()
+		hashes, err = h.DownloadAndParseHashFile(shaSumsURL)
 		if err != nil {
-			log.Fatal("Error: ", err)
+			log.Fatal("Downloading and/or parsing file: ", "error", err.Error())
 		}
 	}
 
@@ -470,7 +101,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		},
 	}
 
-	log.Info("Performing HTTP request") // Add debug output
+	log.Infow("Performing HTTP request") // Add debug output
 
 	req, err := http.NewRequest("HEAD", urlFile, nil)
 	if err != nil {
@@ -509,7 +140,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		log.Fatal("Invalid Content-Length received from server")
 	}
 
-	log.Info("Starting download")
+	log.Infow("Starting download")
 
 	var wg sync.WaitGroup
 	wg.Add(numParts)
@@ -531,7 +162,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	fileName := path.Base(parsedURL.Path)
 
 	// Create and initialize the download manifest
-	downloadManifest := DownloadManifest{
+	downloadManifest := manifest.DownloadManifest{
 		Version:  "1.0",
 		UUID:     uuid.New().String(),
 		Filename: fileName,
@@ -594,10 +225,10 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 			
 			// Set the progress bar details
 			bar.PrependFunc(func(b *uiprogress.Bar) string {
-				return fmt.Sprintf("%-*s | %s | %s", maxProgressFileNameLen, progressFileName, formatFileSize(int64(b.Current())), formatFileSize(int64(rangeSize)))
+				return fmt.Sprintf("%-*s | %s | %s", maxProgressFileNameLen, progressFileName, utils.FormatFileSize(int64(b.Current())), utils.FormatFileSize(int64(rangeSize)))
 			})
 			bar.AppendFunc(func(b *uiprogress.Bar) string {
-				return fmt.Sprintf("%s %s", formatPercentage(int64(b.Current()), int64(rangeSize)), speed.Load().(string))
+				return fmt.Sprintf("%s %s", utils.FormatPercentage(int64(b.Current()), int64(rangeSize)), speed.Load().(string))
 			})
 
 			// Save this progress bar in the progressBars slice
@@ -630,17 +261,17 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 			}
 			defer resp.Body.Close()
 
-			buf := bufferPool.Get().([]byte) // Get a buffer from the pool
+			buf := utils.BufferPool.Get().([]byte) // Get a buffer from the pool
 			defer func() { 
-				bufferPool.Put(buf) 
+				utils.BufferPool.Put(buf) 
 			}() // Return the buffer to the pool when done
 
 			reader := io.LimitReader(resp.Body, int64(totalSize))
 
 			// Create a custom writer to track the progress
-			writer := &progressWriter{
-				bar: bar,
-				w:   outputPartFile,
+			writer := &utils.ProgressWriter{
+				Bar: bar,
+				W:   outputPartFile,
 			}
 
 			totalBytesDownloaded := int64(0)
@@ -674,7 +305,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 					log.Fatal("Error: ", err)
 				}
 				startTime = time.Now() // reset start time after processing the chunk
-				currentSpeed := formatSpeed(totalBytesDownloaded, totalElapsedMilliseconds)
+				currentSpeed := utils.FormatSpeed(totalBytesDownloaded, totalElapsedMilliseconds)
 				speed.Store(currentSpeed)
 			}
 
@@ -715,12 +346,12 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 				log.Fatal("Error: expected to read more bytes")
 			}
 
-			log.Info(
+			log.Infow(
 				"Writing to manifest file",
 			)
 
 			// Add downloaded part info to the download manifest
-			downloadManifest.DownloadedParts = append(downloadManifest.DownloadedParts, DownloadedPart{
+			downloadManifest.DownloadedParts = append(downloadManifest.DownloadedParts, manifest.DownloadedPart{
 				PartNumber: i + 1,
 				FileHash:   sha256HashString,
 				Timestamp:  timestamp,
@@ -743,46 +374,46 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	uiprogress.Stop()
 
 	// Saving the download manifest
-	saveDownloadManifest(downloadManifest)
+	m.SaveDownloadManifest(downloadManifest)
 
 	// Obtain the encryption key
-	key, err := createEncryptionKey(partFilesHashes)
+	key, err := encryption.CreateEncryptionKey(partFilesHashes)
 	if err != nil {
 		log.Fatal("Error:", err)
 		return
 	}
 
 	// Encrypt the download manifest
-	manifestPath := getDownloadManifestPath()
+	manifestPath := m.GetDownloadManifestPath()
 
 	// Before encrypting the manifest file, check if the encrypted file exists and delete it
-	if pathExists(manifestPath + ".enc") {
+	if fileutils.PathExists(manifestPath + ".enc") {
 		log.Debugw("Encrypted manifest file exists. Deleting:", "file", manifestPath + ".enc")
 		err := os.Remove(manifestPath + ".enc")
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("Removing manifest file: ", "error", err.Error())
 		}
 	}
 
-	err = encryptFile(manifestPath, key)
+	err = e.EncryptFile(manifestPath, key)
 	if err != nil {
-		log.Fatal("Error:", err)
+		log.Fatal("Encrypting manifest file: ", "error", err.Error())
 		return
 	}
 
 	// Decrypt the download manifest
 	var decryptedContent []byte
-	decryptedContent, err = decryptFile(manifestPath + ".enc", key, false)
+	decryptedContent, err = e.DecryptFile(manifestPath + ".enc", key, false)
 	if err != nil {
-		log.Fatal("Error:", err)
+		log.Fatal("Decrypting manifest file: ", "error:", err.Error())
 		return
 	}
 
 	// Decode the JSON content into a map
-	var manifest DownloadManifest // The JSON structure defined above as DownloadManifest
+	var manifest manifest.DownloadManifest // The JSON structure defined above as DownloadManifest
 	err = json.Unmarshal(decryptedContent, &manifest)
 	if err != nil {
-		log.Fatal("Error decoding decrypted content: ", err)
+		log.Fatal("Decoding decrypted content: ", "error", err.Error())
 	}
 
 	// Clean memory after decoding content
@@ -796,13 +427,13 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	}
 
 	sort.Slice(files, func(i, j int) bool {
-		hashI, err := calculateSHA256(files[i])
+		hashI, err := hasher.CalculateSHA256(files[i])
 		if err != nil {
-			log.Fatal("Error calculating hash: ", err)
+			log.Fatal("Calculating hash: ", "error", err.Error())
 		}
-		hashJ, err := calculateSHA256(files[j])
+		hashJ, err := hasher.CalculateSHA256(files[j])
 		if err != nil {
-			log.Fatal("Error calculating hash: ", err)
+			log.Fatal("Calculating hash: ", "error", err.Error())
 		}
 
 		// Get the part numbers from the .file_parts_manifest.json file
@@ -848,14 +479,14 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		// Remove manifest file and leave only the encrypted one
 		err = os.Remove(file)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("Removing part file: ", "error", err.Error())
 		}
 	}
 
-	log.Info("File downloaded and assembled")
+	log.Infow("File downloaded and assembled")
 
 
-	fileHash, err := hashFile(fileName)
+	fileHash, err := hasher.HashFile(fileName)
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
@@ -864,34 +495,35 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		"File Hashes", 
 		"File",   			fileName,
 		"sha SUMS hash",   	hashes[fileName],
-		"MD5",    			fileHash.md5,
-		"SHA1",   			fileHash.sha1,
-		"SHA256", 			fileHash.sha256,
+		"MD5",    			fileHash.Md5,
+		"SHA1",   			fileHash.Sha1,
+		"SHA256", 			fileHash.Sha256,
 	)  // Print file hashes. Debug output
 
 	// Validate the assembled file integrity and authenticity
-	if hashType == "strong" && (etag == fileHash.md5 || etag == fileHash.sha1 || etag == fileHash.sha256) {
-		log.Info("File hash matches Etag obtained from server (strong hash)")
-	} else if hashType == "weak" && strings.HasPrefix(etag, fileHash.md5) {
-		log.Info("File hash matches Etag obtained from server (weak hash))")
+	if hashType == "strong" && (etag == fileHash.Md5 || etag == fileHash.Sha1 || etag == fileHash.Sha256) {
+		log.Infow("File hash matches Etag obtained from server (strong hash)")
+	} else if hashType == "weak" && strings.HasPrefix(etag, fileHash.Md5) {
+		log.Infow("File hash matches Etag obtained from server (weak hash))")
 	} else if hashType == "unknown" {
-		log.Info("Unknown Etag format, cannot check hash")
+		log.Infow("Unknown Etag format, cannot check hash")
 	} else if hash, ok := hashes[fileName]; ok {
-		if hash == fileHash.sha256 {
-			log.Info("File hash matches hash from SHA sums file")
+		if hash == fileHash.Sha256 {
+			log.Infow("File hash matches hash from SHA sums file")
 		} else {
-			log.Info("File hash does not match hash from SHA sums file")
+			log.Infow("File hash does not match hash from SHA sums file")
 		}
 	} else {
-		log.Info("File hash does not match Etag")
+		log.Infow("File hash does not match Etag")
 	}
 }
 
 func execute(cmd *cobra.Command, args []string) {
+	log = logger.InitLogger(verbose) // Keep track of returned logger
+    log.Infow("Logger initialized")
 	if urlFile == "" {
 		log.Fatal("Error: the --url flag is required")
 	}
-	initLogger(verbose) // Call this before calling run
 	run(maxConcurrentConnections, shaSumsURL, urlFile, numParts)
 }
 

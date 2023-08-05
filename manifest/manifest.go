@@ -8,71 +8,101 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+
+	"github.com/campeon23/multi-source-downloader/fileutils"
+	"github.com/campeon23/multi-source-downloader/logger"
 )
 
-func getDownloadManifestPath() string {
+type Manifest struct {
+	Log	*logger.Logger
+}
+
+// Adding a new structure to represent the JSON manifest
+type DownloadManifest struct {
+	UUID             string                `json:"uuid"`
+	Version		  	 string                `json:"version"`
+	Filename         string                `json:"filename"`
+	URL              string                `json:"url"`
+	Etag			 string                `json:"etag"`
+	HashType		 string                `json:"hash_type"`
+	DownloadedParts  []DownloadedPart      `json:"downloaded_parts"`
+}
+
+type DownloadedPart struct {
+	PartNumber int    `json:"part_number"`
+	FileHash   string `json:"file_hash"`
+	Timestamp  int64  `json:"timestamp"`
+}
+
+func NewManifest(log *logger.Logger) *Manifest {
+	return &Manifest{
+		Log: log,
+	}
+}
+
+func (m *Manifest) GetDownloadManifestPath() string {
 	if runtime.GOOS == "windows" {
 		user, err := user.Current()
 		if err != nil {
-			log.Fatal("Error fetching user information: ", err)
+			m.Log.Fatal("Error fetching user information: ", err)
 		}
 		return filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader", ".file_parts_manifest.json")
 	}
 	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".file_parts_manifest.json")
 }
 
-func saveDownloadManifest(manifest DownloadManifest) {
-	log.Debugw("Initializing Application Directory")
+func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest) {
+	m.Log.Debugw("Initializing Application Directory")
 
-	manifestPath := getDownloadManifestPath()
+	manifestPath := m.GetDownloadManifestPath()
 
 	// Ensure the directory exists
 	manifestDir := filepath.Dir(manifestPath)
 	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		log.Fatal("Error creating config directory: ", err)
+		m.Log.Fatal("Error creating config directory: ", err)
 	}
 
 	// Debugging: Check if the directory was created
-	if pathExists(manifestDir) {
-		log.Debugw("Application Directory created successfully", "directory", manifestDir)
+	if fileutils.PathExists(manifestDir) {
+		m.Log.Debugw("Application Directory created successfully", "directory", manifestDir)
 	} else {
-		log.Warnw("Directory not found", "directory", manifestDir)
+		m.Log.Warnw("Directory not found", "directory", manifestDir)
 	}
 
 	// Before saving the manifest file, check if the file exists and delete it
-	if pathExists(manifestPath) {
-		log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
+	if fileutils.PathExists(manifestPath) {
+		m.Log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
 		err := os.Remove(manifestPath)
 		if err != nil {
-			log.Fatal(err)
+			m.Log.Fatal("Manifest file does not exists: ", "error", err.Error())
 		}
 	} else {
-		log.Infow("Manifest file not found", "file: ", manifestPath)
+		m.Log.Infow("Manifest file not found", "file: ", manifestPath)
 	}
 
 	file, err := os.Create(manifestPath)
 	if err != nil {
-		log.Fatal("Error creating manifest file: ", err)
+		m.Log.Fatal("Error creating manifest file: ", err)
 	}
 	defer file.Close()
 
 	// Debugging: Check if the file was created
 	if _, err := os.Stat(manifestPath); err == nil {
-		log.Debugw("File created successfully", "file", manifestPath)
+		m.Log.Debugw("File created successfully", "file", manifestPath)
 	} else {
-		log.Warnw("File not found", "file", manifestPath)
+		m.Log.Warnw("File not found", "file", manifestPath)
 	}
 
 	encoder := json.NewEncoder(file)
 	if err := encoder.Encode(manifest); err != nil {
-		log.Fatal("Error encoding manifest JSON: ", err)
+		m.Log.Fatal("Error encoding manifest JSON: ", err)
 	}
 
 	// On Windows, make the file hidden
 	if runtime.GOOS == "windows" {
 		cmd := fmt.Sprintf("attrib +h %s", manifestPath)
 		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
-			log.Fatal("Error hiding manifest file: ", err)
+			m.Log.Fatal("Error hiding manifest file: ", err)
 		}
 	}
 }

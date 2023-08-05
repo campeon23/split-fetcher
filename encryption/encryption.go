@@ -11,10 +11,21 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/campeon23/multi-source-downloader/logger"
 	"golang.org/x/crypto/pbkdf2"
 )
 
-func createEncryptionKey(strings []string) ([]byte, error) {
+type Encryption struct {
+	Log	*logger.Logger
+}
+
+func NewEncryption(log *logger.Logger) *Encryption {
+	return &Encryption{
+		Log: log,
+	}
+}
+
+func CreateEncryptionKey(strings []string) ([]byte, error) {
 	// Sort the strings in reverse order
 	sort.Sort(sort.Reverse(sort.StringSlice(strings)))
 
@@ -32,8 +43,8 @@ func createEncryptionKey(strings []string) ([]byte, error) {
 }
 
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
-func encryptFile(filename string, key []byte) error {
-	log.Info("Initializing ecryption of manifest file.")
+func (e *Encryption) EncryptFile(filename string, key []byte) error {
+	e.Log.Infow("Initializing ecryption of manifest file.")
 	plaintext, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -71,19 +82,19 @@ func encryptFile(filename string, key []byte) error {
 	encryptedFile.Write(iv)
 	encryptedFile.Write(ciphertext)
 
-	log.Debugw("File encrypted successfully and saved as:", 
+	e.Log.Debugw("File encrypted successfully and saved as:", 
 		"encryptedFilename", encryptedFilename,
 	)
 
 	err = os.Remove(filename)
 	if err != nil {
-		log.Fatal(err)
+		e.Log.Fatal("Cannot remove encrypted file:", "error", err.Error())
 	}
 
 	return nil
 }
 
-func decryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
+func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
 	encryptedFile, err := os.Open(encryptedFilename)
 	if err != nil {
 		return nil, err
@@ -126,7 +137,7 @@ func decryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, err
 			return nil, err
 		}
 
-		log.Debugw("File decrypted successfully and saved as:",
+		e.Log.Debugw("File decrypted successfully and saved as:",
 			"decryptedFilename", decryptedFilename,
 		)
 
