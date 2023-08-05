@@ -31,7 +31,8 @@ import (
 	"github.com/gosuri/uiprogress"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.uber.org/zap"
+
+	// "go.uber.org/zap"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -41,7 +42,7 @@ var (
 	urlFile  					string
 	numParts 					int
 	verbose 					bool
-	log 						*zap.SugaredLogger
+	// log 						*zap.SugaredLogger
 )
 
 var rootCmd = &cobra.Command{
@@ -102,21 +103,21 @@ authenticity of the downloaded file.`)
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 }
 
-func initLogger(verbose bool) {
-	var cfg zap.Config
-	if verbose {
-		cfg = zap.NewDevelopmentConfig() // More verbose logging
-	} else {
-		cfg = zap.NewProductionConfig() // Only INFO level and above
-	}
+// func initLogger(verbose bool) {
+// 	var cfg zap.Config
+// 	if verbose {
+// 		cfg = zap.NewDevelopmentConfig() // More verbose logging
+// 	} else {
+// 		cfg = zap.NewProductionConfig() // Only INFO level and above
+// 	}
 
-	logger, err := cfg.Build()
-	if err != nil {
-		panic(err)
-	}
-	defer logger.Sync() // Flushes buffer, if any
-	log = logger.Sugar()
-}
+// 	logger, err := cfg.Build()
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer logger.Sync() // Flushes buffer, if any
+// 	log = logger.Sugar()
+// }
 
 func downloadAndParseHashFile() (map[string]string, error) {
 	resp, err := http.Get(shaSumsURL)
