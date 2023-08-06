@@ -24,18 +24,24 @@ import (
 )
 
 type Downloader struct {
+	UrlFile string 
+	NumParts int 
+	MaxConcurrentConnections int
 	PartsDir string
 	Log	*logger.Logger
 }
 
-func NewDownloader(partsDir string, log *logger.Logger) *Downloader {
+func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, log *logger.Logger) *Downloader {
 	return &Downloader{
+		UrlFile: urlFile, 
+		NumParts: numParts,
+		MaxConcurrentConnections: maxConcurrentConnections,
 		PartsDir: partsDir,
 		Log: log,
 	}
 }
 
-func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurrentConnections int) (manifest.DownloadManifest, []string, int, string, string, int, string) {
+func (d *Downloader) DownloadPartFiles() (manifest.DownloadManifest, []string, int, string, string, int, string) {
 	var hashType string
 
 	client := &http.Client{
@@ -46,7 +52,7 @@ func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurre
 
 	d.Log.Infow("Performing HTTP request") // Add debug output
 
-	req, err := http.NewRequest("HEAD", urlFile, nil)
+	req, err := http.NewRequest("HEAD", d.UrlFile, nil)
 	if err != nil {
 		d.Log.Fatal("Error: ", err)
 	}
@@ -86,9 +92,9 @@ func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurre
 	d.Log.Infow("Starting download")
 
 	var wg sync.WaitGroup
-	wg.Add(numParts)
+	wg.Add(d.NumParts)
 
-	rangeSize := size / numParts
+	rangeSize := size / d.NumParts
 
 	d.Log.Debugw(
 		"Calculated File size and Range size",
@@ -96,7 +102,7 @@ func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurre
 		"RangeSize", rangeSize,
 	) // Print file size and range size. . Debug output
 
-	parsedURL, err := url.Parse(urlFile)
+	parsedURL, err := url.Parse(d.UrlFile)
 	if err != nil {
 		d.Log.Fatal("Invalid URL")
 	}
@@ -109,7 +115,7 @@ func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurre
 		Version:  "1.0",
 		UUID:     uuid.New().String(),
 		Filename: fileName,
-		URL:      urlFile,
+		URL:      d.UrlFile,
 		Etag:	  etag,
 		HashType: hashType,
 	}
@@ -124,18 +130,18 @@ func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurre
 
 	// Create a new UI progress bar and start it
 	uiprogress.Start()
-	progressBars := make([]*uiprogress.Bar, numParts)
-	partFilesHashes := make([]string, numParts)
+	progressBars := make([]*uiprogress.Bar, d.NumParts)
+	partFilesHashes := make([]string, d.NumParts)
 
-	sem := make(chan struct{}, maxConcurrentConnections) // maxConcurrentConnections is the limit you set
+	sem := make(chan struct{}, d.MaxConcurrentConnections) // maxConcurrentConnections is the limit you set
 
-	if maxConcurrentConnections == 0 {
+	if d.MaxConcurrentConnections == 0 {
 		d.Log.Debugw("Max concurrent connections not set. Downloading all parts at once.")
 	}
 
-	for i := 0; i < numParts; i++ {
+	for i := 0; i < d.NumParts; i++ {
 		go func(i int) {
-			if maxConcurrentConnections != 0 {
+			if d.MaxConcurrentConnections != 0 {
 				sem <- struct{}{} // acquire a token
 				defer func() { <-sem }() // release the token
 			}
@@ -179,13 +185,13 @@ func (d *Downloader) DownloadPartFiles(urlFile string, numParts int, maxConcurre
 
 			startLength := i * rangeSize
 			endLength := startLength + rangeSize - 1
-			if i == numParts - 1 {
+			if i == d.NumParts - 1 {
 				endLength = size - 1
 			}
 
 			totalSize := endLength - startLength + 1
 
-			req, err := http.NewRequest("GET", urlFile, nil)
+			req, err := http.NewRequest("GET", d.UrlFile, nil)
 			if err != nil {
 				d.Log.Fatal("Error: ", err)
 			}

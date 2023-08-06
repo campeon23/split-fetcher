@@ -110,7 +110,7 @@ func processPartsDir() {
 
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool){
 	a := assembler.NewAssembler(partsDir, log)
-	d := downloader.NewDownloader(partsDir, log)
+	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, log)
 	e := encryption.NewEncryption(log)
 	h := hasher.NewHasher(log)
 	m := manifest.NewManifest(log)
@@ -135,7 +135,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		log.Fatal("URL is required")
 	}
 
-	downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName := d.DownloadPartFiles(urlFile, numParts, maxConcurrentConnections)
+	downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName := d.DownloadPartFiles()
 
 	// Create the final file we want to assemble
 	outFile, err := os.Create(fileName)
