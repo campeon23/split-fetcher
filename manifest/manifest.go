@@ -52,7 +52,7 @@ func (m *Manifest) GetDownloadManifestPath() string {
 }
 
 func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest) {
-	m.Log.Debugw("Initializing Application Directory")
+	m.Log.Debugw("Initializing Config Directory")
 
 	manifestPath := m.GetDownloadManifestPath()
 

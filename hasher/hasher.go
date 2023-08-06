@@ -96,7 +96,7 @@ func HashFile(path string) (fileHashes, error) {
 }
 
 // Function to calculate the SHA-256 hash of a file
-func CalculateSHA256(filename string) (string, error) {
+func (h *Hasher) CalculateSHA256(filename string) (string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return "", err
