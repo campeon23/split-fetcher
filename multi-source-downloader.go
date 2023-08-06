@@ -36,6 +36,8 @@ var (
 	shaSumsURL 					string
 	urlFile  					string
 	numParts 					int
+	partsDir 					string
+	keepParts 					bool
 	verbose 					bool
 	log 						*logger.Logger // Declare at package level if you want to use the logger across different functions in this package
 )
@@ -48,52 +50,78 @@ with options for integrity validation and connection limits.`,
 to be downloaded into n parts and downloads them concurrently in an optimized manner. 
 It then assembles the final file, with support for either Etag validation or Hash 
 validation, to ensure file integrity. And more things...`,
-	Run:   execute,
+	Run:   func(cmd *cobra.Command, args []string) {
+		// Retrieve the values of your flags
+		partsDir = viper.GetString("parts-dir")
+		keepParts = viper.GetBool("keep-parts")
+		
+		// Process the partsDir value
+		processPartsDir()
+		// Execute the main function
+		execute(cmd, args)
+	},
 }
 
 func init() {
-	// cobra.OnInitialize(initConfig)
+	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "max-connections", "m", 0, `(Optional) Controls how many parts of the 
 file are downloaded at the same time. You can set a specific number, 
 or if you set it to 0, it will choose the best number for you.`)
 	rootCmd.PersistentFlags().StringVarP(&shaSumsURL, "sha-sums", "s", "", `(Optional) The URL of the file containing the hashes refers to a file 
 with either MD5 or SHA-256 hashes, used to verify the integrity and 
 authenticity of the downloaded file.`)
-	rootCmd.PersistentFlags().StringVarP(&urlFile, "url", "u", "", "URL of the file to download")
+	rootCmd.PersistentFlags().StringVarP(&urlFile, "url", "u", "", "(Required) URL of the file to download")
 	rootCmd.PersistentFlags().IntVarP(&numParts, "num-parts", "n", 5, "(Optional) Number of parts to split the download into")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "(Optional) Output verbose logging (INFO and Debug), verbose not passed only output INFO logging.")
+	rootCmd.PersistentFlags().StringVarP(&partsDir, "parts-dir", "d", "", "(Optional) The directory to save the parts files")
+	rootCmd.PersistentFlags().BoolVarP(&keepParts, "keep-parts", "k", false, "(Optional) Whether to keep the parts files after assembly")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, `(Optional) Output verbose logging (INFO and Debug), verbose not passed
+only output INFO logging.`)
 
 	viper.BindPFlag("max-connections", rootCmd.PersistentFlags().Lookup("max-connections"))
 	viper.BindPFlag("sha-sums", rootCmd.PersistentFlags().Lookup("sha-sums"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
 	viper.BindPFlag("num-parts", rootCmd.PersistentFlags().Lookup("num-parts"))
+	viper.BindPFlag("parts-dir", rootCmd.PersistentFlags().Lookup("parts-dir"))
+	viper.BindPFlag("keep-parts", rootCmd.PersistentFlags().Lookup("keep-parts"))
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 }
 
-func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int){
-	h := hasher.NewHasher(log)
-	m := manifest.NewManifest(log)
-	e := encryption.NewEncryption(log)
+func initConfig() {
+	viper.AutomaticEnv() // read in environment variables that match
+}
 
-	hashes := make(map[string]string)
-	if len(shaSumsURL) != 0 {
+func processPartsDir() {
+	if partsDir == "" {
 		var err error
-		log.Infow(
-			"Initializing HTTP request",
-		) // Add info output
-		log.Debugw(
-			"Creating HTTP request for URL",
-			"URL", shaSumsURL,
-		) // Add debug output
-		hashes, err = h.DownloadAndParseHashFile(shaSumsURL)
+		partsDir, err = os.Getwd()
 		if err != nil {
-			log.Fatal("Downloading and/or parsing file: ", "error", err.Error())
+			log.Fatal("Failed to get current directory: ", err.Error())
+		}
+	} else {
+		// If the input does not look like a path, add it to the current directory
+		if !filepath.IsAbs(partsDir) && !strings.HasPrefix(partsDir, "./") {
+			partsDir = "./" + partsDir
 		}
 	}
 
-	if len(urlFile) == 0 {
-		log.Fatal("URL is required")
+	// If the partsDir doesn't end with a slash, add it 
+	if !strings.HasSuffix(partsDir, string(os.PathSeparator)) {
+		partsDir += string(os.PathSeparator)
 	}
+
+	fmt.Printf("Debugging partsDir: %s\n", partsDir) 
+
+	// Create the directory if it doesn't exist
+	if _, err := os.Stat(partsDir); os.IsNotExist(err) {
+		err = os.MkdirAll(partsDir, os.ModePerm)
+		if err != nil {
+			log.Fatal("Failed to create directory: ", err.Error())
+		}
+	}
+}
+
+func downloadPartFiles(urlFile string, numParts int, maxConcurrentConnections int) (manifest.DownloadManifest, []string, int, string, string, int, string) {
+	var hashType string
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -118,7 +146,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 
 	etag := res.Header.Get("Etag")
 	etag = strings.ReplaceAll(etag, "\"", "") // Remove double quotes
-	var hashType string
+	
 	if strings.HasPrefix(etag, "W/") {
 		hashType = "weak"
 		etag = etag[2:] // We've already removed the quotes, so we only need to skip the "W/"
@@ -139,7 +167,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	if err != nil {
 		log.Fatal("Invalid Content-Length received from server")
 	}
-
+	
 	log.Infow("Starting download")
 
 	var wg sync.WaitGroup
@@ -173,11 +201,6 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 
 	log.Debugw("Inititalizing download manifest", "downloadManifest", downloadManifest) // Add debug output
 
-	outFile, err := os.Create(fileName)
-	if err != nil {
-		log.Fatal("Error: ", err)
-	}
-	defer outFile.Close()
 
 	// Calculate the maximum length of the filenames
 	maxProgressFileNameLen := 0
@@ -207,7 +230,14 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 			timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
 			progressFileName := fmt.Sprintf("output part %d", i+1)
-			outputPartFileName := fmt.Sprintf("output-%d.part", i+1)
+			// outputPartFileName := fmt.Sprintf("output-%d.part", i+1)
+			outputPartFileName := fmt.Sprintf("%soutput-%s-%d.part", partsDir, uuid.New(), i+1)
+
+			log.Debugw("Debugging part files paths",
+				"outputPartFileName", outputPartFileName,
+				"partsDir", partsDir,
+			) // Add debug output
+
 			outputPartFile, err := os.Create(outputPartFileName)
 			if err != nil {
 				log.Fatal("Error: ", err)
@@ -220,8 +250,6 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 
 			// Create a progress bar
 			bar := uiprogress.AddBar(rangeSize).PrependElapsed()
-
-			// var speed string
 			
 			// Set the progress bar details
 			bar.PrependFunc(func(b *uiprogress.Bar) string {
@@ -329,10 +357,9 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 			// Close the file before renaming
 			outputPartFile.Close()
 
-			// Rename the temporary part file
-			partFileName := fmt.Sprintf("output-%s-%d.part", sha256HashString, timestamp)
+			partFileName := fmt.Sprintf("%soutput-%s-%d.part", partsDir, sha256HashString, timestamp)
 			if err := os.Rename(outputPartFileName, partFileName); err != nil {
-				log.Fatal("Error: ", err)
+				log.Fatal("Failed to rename the part file: %v", "error", err)
 			}
 
 			// Reopen the file under the new name
@@ -373,55 +400,13 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	// Stop the progress bar after all downloads are complete
 	uiprogress.Stop()
 
-	// Saving the download manifest
-	m.SaveDownloadManifest(downloadManifest)
+	return downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName
+}
 
-	// Obtain the encryption key
-	key, err := encryption.CreateEncryptionKey(partFilesHashes)
-	if err != nil {
-		log.Fatal("Error:", err)
-		return
-	}
-
-	// Encrypt the download manifest
-	manifestPath := m.GetDownloadManifestPath()
-
-	// Before encrypting the manifest file, check if the encrypted file exists and delete it
-	if fileutils.PathExists(manifestPath + ".enc") {
-		log.Debugw("Encrypted manifest file exists. Deleting:", "file", manifestPath + ".enc")
-		err := os.Remove(manifestPath + ".enc")
-		if err != nil {
-			log.Fatal("Removing manifest file: ", "error", err.Error())
-		}
-	}
-
-	err = e.EncryptFile(manifestPath, key)
-	if err != nil {
-		log.Fatal("Encrypting manifest file: ", "error", err.Error())
-		return
-	}
-
-	// Decrypt the download manifest
-	var decryptedContent []byte
-	decryptedContent, err = e.DecryptFile(manifestPath + ".enc", key, false)
-	if err != nil {
-		log.Fatal("Decrypting manifest file: ", "error:", err.Error())
-		return
-	}
-
-	// Decode the JSON content into a map
-	var manifest manifest.DownloadManifest // The JSON structure defined above as DownloadManifest
-	err = json.Unmarshal(decryptedContent, &manifest)
-	if err != nil {
-		log.Fatal("Decoding decrypted content: ", "error", err.Error())
-	}
-
-	// Clean memory after decoding content
-	decryptedContent = nil
-
-	// Search for all output-* files in the current directory 
+func assembleFileFromParts(partsDir string, manifest manifest.DownloadManifest, outFile *os.File, numParts int, rangeSize int, size int, keepParts bool, hasher hasher.Hasher) {
+    // Search for all output-* files in the current directory 
 	//	to proceed to assemble the final file
-	files, err := filepath.Glob("output-*")
+	files, err := filepath.Glob(partsDir + "output-*")
 	if err != nil {
 		log.Fatal("Error: ", err)
 	}
@@ -476,15 +461,112 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		}
 
 		partFile.Close()
-		// Remove manifest file and leave only the encrypted one
-		err = os.Remove(file)
-		if err != nil {
-			log.Fatal("Removing part file: ", "error", err.Error())
+		if !keepParts { // If keepParts is false, remove the part file
+			// Remove manifest file and leave only the encrypted one
+			err = os.Remove(file)
+			if err != nil {
+				log.Fatal("Removing part file: ", "error", err.Error())
+			}
 		}
 	}
 
 	log.Infow("File downloaded and assembled")
+}
 
+func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool){
+	h := hasher.NewHasher(log)
+	m := manifest.NewManifest(log)
+	e := encryption.NewEncryption(log)
+
+	hashes := make(map[string]string)
+	if len(shaSumsURL) != 0 {
+		var err error
+		log.Infow(
+			"Initializing HTTP request",
+		) // Add info output
+		log.Debugw(
+			"Creating HTTP request for URL",
+			"URL", shaSumsURL,
+		) // Add debug output
+		hashes, err = h.DownloadAndParseHashFile(shaSumsURL)
+		if err != nil {
+			log.Fatal("Downloading and/or parsing file: ", "error", err.Error())
+		}
+	}
+
+	if len(urlFile) == 0 {
+		log.Fatal("URL is required")
+	}
+
+	downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName := downloadPartFiles(urlFile, numParts, maxConcurrentConnections)
+
+	// Create the final file we want to assemble
+	outFile, err := os.Create(fileName)
+	if err != nil {
+		log.Fatal("Error: ", err)
+	}
+	defer outFile.Close()
+
+	// Saving the download manifest
+	m.SaveDownloadManifest(downloadManifest)
+
+	// Obtain the encryption key
+	key, err := encryption.CreateEncryptionKey(partFilesHashes)
+	if err != nil {
+		log.Fatal("Error:", err)
+		return
+	}
+
+	// Get the path to the download manifest
+	manifestPath := m.GetDownloadManifestPath()
+
+	// Before encrypting the manifest file, check if the encrypted file exists and delete it
+	if fileutils.PathExists(manifestPath + ".enc") {
+		log.Debugw("Encrypted manifest file exists. Deleting:", "file", manifestPath + ".enc")
+		err := os.Remove(manifestPath + ".enc")
+		if err != nil {
+			log.Fatal("Removing manifest file: ", "error", err.Error())
+		}
+	}
+
+	// Encrypt the download manifest
+	err = e.EncryptFile(manifestPath, key)
+	if err != nil {
+		log.Fatal("Encrypting manifest file: ", "error", err.Error())
+		return
+	}
+
+	// Decrypt the downloaded manifest
+	var decryptedContent []byte
+	decryptedContent, err = e.DecryptFile(manifestPath + ".enc", key, false)
+	if err != nil {
+		log.Fatal("Decrypting manifest file: ", "error:", err.Error())
+		return
+	}
+
+	// Decode the JSON content into a map
+	var manifest manifest.DownloadManifest // The JSON structure defined above as DownloadManifest
+	err = json.Unmarshal(decryptedContent, &manifest)
+	if err != nil {
+		log.Fatal("Decoding decrypted content: ", "error", err.Error())
+	}
+
+	// Clean memory after decoding content
+	decryptedContent = nil
+
+	// Assemble the file from the downloaded parts
+	assembleFileFromParts(partsDir, downloadManifest, outFile, numParts, rangeSize, size, keepParts, hasher.Hasher{})
+
+	if !keepParts { // If keepParts is false, remove the part file
+		// If partsDir was provided
+		if partsDir != "" {
+			// Remove the directory and all its contents
+			err = os.RemoveAll(partsDir)
+			if err != nil {
+				log.Fatal("Failed to remove directory: ", err.Error())
+			}
+		}
+	}
 
 	fileHash, err := hasher.HashFile(fileName)
 	if err != nil {
@@ -524,7 +606,7 @@ func execute(cmd *cobra.Command, args []string) {
 	if urlFile == "" {
 		log.Fatal("Error: the --url flag is required")
 	}
-	run(maxConcurrentConnections, shaSumsURL, urlFile, numParts)
+	run(maxConcurrentConnections, shaSumsURL, urlFile, numParts, partsDir, keepParts)
 }
 
 func main() {
