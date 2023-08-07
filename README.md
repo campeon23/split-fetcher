@@ -29,6 +29,7 @@ Flags:
   -s, --sha-sums string        // (Optional) The URL of the file containing the hashes.
   -u, --url string             // (Required) URL of the file to download
   -v, --verbose                // (Optional) Output verbose logging (INFO and Debug), verbose not passed only output INFO logging.
+```
 
 Examples:
 
@@ -63,7 +64,7 @@ manifest="~/.config/.multi-source-downloader/ubuntu-23.04-netboot-amd64.manifest
 :zap: Fast & Concurrent
 This tool breaks your downloads into parts and fetches them concurrently, making it lightening fast :zap:
 
-Concurrency Image
+![Downloader Graphic](./images/concurrency.png)
 
 :scales: Balancing the Load
 By setting the number of connections, you have control over how many parts of the file are downloaded at the same time. If set to 0, the application automatically balances the load.
@@ -76,9 +77,6 @@ Ensure your download's integrity and authenticity with Hash or Etag validation.
 
 :globe_with_meridians: Open Source
 Feel free to contribute and make this tool even more awesome!
-
-:pencil: License
-Include a short note about the license your project is using.
 
 ## :page_with_curl: License
 This project is licensed under the terms of the MIT license. See the [LICENSE](LICENSE) file for reference.
