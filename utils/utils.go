@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/gosuri/uiprogress"
 )
 
@@ -13,6 +14,18 @@ var BufferPool = &sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 4096) // Fixed buffer size for efficient memory usage
 	},
+}
+
+type Utils struct {
+	PartsDir 	string
+	Log			*logger.Logger
+}
+
+func NewUtils(partsDir string, log *logger.Logger) *Utils {
+	return &Utils{
+		PartsDir: partsDir,
+		Log: log,
+	}
 }
 
 type ProgressWriter struct {

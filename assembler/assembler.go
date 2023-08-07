@@ -1,8 +1,7 @@
-// Inside assembler/assembler.go
-
 package assembler
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,37 +13,39 @@ import (
 )
 
 type Assembler struct {
-	NumParts int
-	PartsDir string
-	KeepParts bool
-	Log	*logger.Logger
+	NumParts 	int
+	PartsDir 	string
+	PrefixParts string
+	KeepParts 	bool
+	Log			*logger.Logger
 }
 
-func NewAssembler(numParts int, partsDir string, keepParts bool, log *logger.Logger) *Assembler {
+func NewAssembler(numParts int, partsDir string, keepParts bool, prefixParts string, log *logger.Logger) *Assembler {
 	return &Assembler{
 		NumParts: numParts,
 		PartsDir: partsDir,
 		KeepParts: keepParts,
+		PrefixParts: prefixParts,
 		Log: log,
 	}
 }
 
-func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, outFile *os.File, size int, rangeSize int, hasher hasher.Hasher) {
-    // Search for all output-* files in the current directory 
+func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, outFile *os.File, size int, rangeSize int, hasher hasher.Hasher) error {
+    // Search for all $prefixParts* files in the current directory 
 	//	to proceed to assemble the final file
-	files, err := filepath.Glob(a.PartsDir + "output-*")
+	files, err := filepath.Glob(a.PartsDir + a.PrefixParts + "*")
 	if err != nil {
-		a.Log.Fatal("Error: ", err)
+		return errors.New("error searching for part files: " + err.Error())
 	}
 
 	sort.Slice(files, func(i, j int) bool {
 		hashI, err := hasher.CalculateSHA256(files[i])
 		if err != nil {
-			a.Log.Fatal("Calculating hash: ", "error", err.Error())
+			a.Log.Fatalw("Calculating hash: ", "error", err.Error())
 		}
 		hashJ, err := hasher.CalculateSHA256(files[j])
 		if err != nil {
-			a.Log.Fatal("Calculating hash: ", "error", err.Error())
+			a.Log.Fatalw("Calculating hash: ", "error", err.Error())
 		}
 
 		// Get the part numbers from the .file_parts_manifest.json file
@@ -72,19 +73,19 @@ func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, ou
 		) // Print the part being assembled. Debug output
 		partFile, err := os.Open(file)
 		if err != nil {
-			a.Log.Fatal("Error: ", err)
+			a.Log.Fatalw("Error: failed oppeing part file.", "error", err)
 		}
 
 		copied, err := io.Copy(outFile, partFile)
 		if err != nil {
-			a.Log.Fatal("Error: ", err)
+			a.Log.Fatalw("Error: ", err)
 		}
 
 		if size != 0 && rangeSize != 0 {
 			if i != a.NumParts-1 && copied != int64(rangeSize) {
-				a.Log.Fatal("Error: File part not completely copied")
+				a.Log.Fatalw("Error: File part not completely copied")
 			} else if i == a.NumParts-1 && copied != int64(size)-int64(rangeSize)*int64(a.NumParts-1) {
-				a.Log.Fatal("Error: Last file part not completely copied")
+				a.Log.Fatalw("Error: Last file part not completely copied")
 			}
 		}
 
@@ -93,10 +94,12 @@ func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, ou
 			// Remove manifest file and leave only the encrypted one
 			err = os.Remove(file)
 			if err != nil {
-				a.Log.Fatal("Removing part file: ", "error", err.Error())
+				a.Log.Fatalw("Removing part file: ", "error", err.Error())
 			}
 		}
 	}
 
 	a.Log.Infow("File downloaded and assembled")
+
+	return nil
 }
