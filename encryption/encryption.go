@@ -88,7 +88,7 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 
 	err = os.Remove(filename)
 	if err != nil {
-		e.Log.Fatal("Cannot remove encrypted file:", "error", err.Error())
+		e.Log.Fatalw("Cannot remove encrypted file:", "error", err.Error())
 	}
 
 	return nil

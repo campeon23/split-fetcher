@@ -24,8 +24,12 @@ func (l *Logger) Warnw(msg string, keysAndValues ...interface{}) {
 	l.sugar.Warnw(msg, keysAndValues...)
 }
 
-func (l *Logger) Fatal(msg string, keysAndValues ...interface{}) {
+func (l *Logger) Fatalw(msg string, keysAndValues ...interface{}) {
 	l.sugar.Fatalw(msg, keysAndValues...)
+}
+
+func (l *Logger) Fatalf(template string, args ...interface{}) {
+	l.sugar.Fatalf(template, args...)
 }
 
 func InitLogger(verbose bool) *Logger {

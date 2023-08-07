@@ -73,7 +73,7 @@ func (h *Hasher) DownloadAndParseHashFile(shaSumsURL string) (map[string]string,
 	return hashes, nil
 }
 
-func HashFile(path string) (fileHashes, error) {
+func (h *Hasher) HashFile(path string) (fileHashes, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return fileHashes{}, err
@@ -110,3 +110,31 @@ func (h *Hasher) CalculateSHA256(filename string) (string, error) {
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
+
+func (h *Hasher) ValidateFileIntegrity(fileName, originalFileName, hashType, etag string, hash string, ok bool) {
+	fileHash, err := h.HashFile(fileName)
+	if err != nil {
+		h.Log.Fatalw("Error: ", "error", err)
+	}
+
+	// Validate the assembled file integrity and authenticity
+	switch {
+	case hashType == "strong" && (etag == fileHash.Md5 || etag == fileHash.Sha1 || etag == fileHash.Sha256):
+		h.Log.Infow("File hash matches Etag obtained from server (strong hash)")
+	case hashType == "weak" && strings.HasPrefix(etag, fileHash.Md5):
+		h.Log.Infow("File hash matches Etag obtained from server (weak hash))")
+	case hashType == "unknown":
+		h.Log.Infow("Unknown Etag format, cannot check hash")
+	case ok:
+		if hash == fileHash.Sha256 {
+			h.Log.Infow("File hash matches hash from SHA sums file")
+		} else {
+			h.Log.Infow("File hash does not match hash from SHA sums file")
+		}
+	default:
+		h.Log.Infow("File hash does not match Etag")
+	}
+}
+
+
+

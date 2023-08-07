@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ type DownloadManifest struct {
 	UUID             string                `json:"uuid"`
 	Version		  	 string                `json:"version"`
 	Filename         string                `json:"filename"`
+	FileHash		 string                `json:"file_hash"`
 	URL              string                `json:"url"`
 	Etag			 string                `json:"etag"`
 	HashType		 string                `json:"hash_type"`
@@ -44,41 +46,53 @@ func NewManifest(log *logger.Logger) *Manifest {
 	}
 }
 
-func (m *Manifest) GetDownloadManifestPath() string {
+func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string, error)  {
+	// Remove all extensions from the filename, in case file contains multiple extensions or just one
+	f := fileutils.NewFileutils(m.Log)
+	fileName = f.RemoveExtensions(fileName)
+
+	var path string
 	if runtime.GOOS == "windows" {
 		user, err := user.Current()
 		if err != nil {
-			m.Log.Fatal("Error fetching user information: ", err)
+			return "", errors.New("Error fetching user information: " + err.Error())
 		}
-		return filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader", ".file_parts_manifest.json")
+		path = filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader")
+	} else {
+		path = filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader")
 	}
-	return filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader", ".file_parts_manifest.json")
+
+	return filepath.Join(path, fileName+".manifest." + hash + ".json"), nil
 }
 
-func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest) {
+func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName string, hash string) error {
+	f := fileutils.NewFileutils(m.Log)
 	m.Log.Debugw("Initializing Config Directory")
 
-	manifestPath := m.GetDownloadManifestPath()
+	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)
+	if err != nil {
+		return err
+	}
 
 	// Ensure the directory exists
 	manifestDir := filepath.Dir(manifestPath)
 	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		m.Log.Fatal("Error creating config directory: ", err)
+		return errors.New("Error creating config directory: " + err.Error())
 	}
 
 	// Debugging: Check if the directory was created
-	if fileutils.PathExists(manifestDir) {
+	if f.PathExists(manifestDir) {
 		m.Log.Debugw("Application Directory created successfully", "directory", manifestDir)
 	} else {
 		m.Log.Warnw("Directory not found", "directory", manifestDir)
 	}
 
 	// Before saving the manifest file, check if the file exists and delete it
-	if fileutils.PathExists(manifestPath) {
+	if f.PathExists(manifestPath) {
 		m.Log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
 		err := os.Remove(manifestPath)
 		if err != nil {
-			m.Log.Fatal("Manifest file does not exists: ", "error", err.Error())
+			return errors.New("Error deleting manifest file: " + err.Error())
 		}
 	} else {
 		m.Log.Infow("Manifest file not found", "file: ", manifestPath)
@@ -86,7 +100,7 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest) {
 
 	file, err := os.Create(manifestPath)
 	if err != nil {
-		m.Log.Fatal("Error creating manifest file: ", err)
+		return errors.New("Error creating manifest file: " + err.Error())
 	}
 	defer file.Close()
 
@@ -99,14 +113,15 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest) {
 
 	encoder := json.NewEncoder(file)
 	if err := encoder.Encode(manifest); err != nil {
-		m.Log.Fatal("Error encoding manifest JSON: ", err)
+		return errors.New("Error encoding manifest JSON: " + err.Error())
 	}
 
 	// On Windows, make the file hidden
 	if runtime.GOOS == "windows" {
 		cmd := fmt.Sprintf("attrib +h %s", manifestPath)
 		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
-			m.Log.Fatal("Error hiding manifest file: ", err)
+			return errors.New("Error hiding manifest file: " + err.Error())
 		}
 	}
+	return nil
 }
