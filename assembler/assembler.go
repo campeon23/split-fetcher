@@ -14,18 +14,22 @@ import (
 )
 
 type Assembler struct {
+	NumParts int
 	PartsDir string
+	KeepParts bool
 	Log	*logger.Logger
 }
 
-func NewAssembler(partsDir string, log *logger.Logger) *Assembler {
+func NewAssembler(numParts int, partsDir string, keepParts bool, log *logger.Logger) *Assembler {
 	return &Assembler{
+		NumParts: numParts,
 		PartsDir: partsDir,
+		KeepParts: keepParts,
 		Log: log,
 	}
 }
 
-func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, outFile *os.File, numParts int, rangeSize int, size int, keepParts bool, hasher hasher.Hasher) {
+func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, outFile *os.File, size int, rangeSize int, hasher hasher.Hasher) {
     // Search for all output-* files in the current directory 
 	//	to proceed to assemble the final file
 	files, err := filepath.Glob(a.PartsDir + "output-*")
@@ -76,14 +80,16 @@ func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, ou
 			a.Log.Fatal("Error: ", err)
 		}
 
-		if i != numParts-1 && copied != int64(rangeSize) {
-			a.Log.Fatal("Error: File part not completely copied")
-		} else if i == numParts-1 && copied != int64(size)-int64(rangeSize)*int64(numParts-1) {
-			a.Log.Fatal("Error: Last file part not completely copied")
+		if size != 0 && rangeSize != 0 {
+			if i != a.NumParts-1 && copied != int64(rangeSize) {
+				a.Log.Fatal("Error: File part not completely copied")
+			} else if i == a.NumParts-1 && copied != int64(size)-int64(rangeSize)*int64(a.NumParts-1) {
+				a.Log.Fatal("Error: Last file part not completely copied")
+			}
 		}
 
 		partFile.Close()
-		if !keepParts { // If keepParts is false, remove the part file
+		if !a.KeepParts { // If keepParts is false, remove the part file
 			// Remove manifest file and leave only the encrypted one
 			err = os.Remove(file)
 			if err != nil {

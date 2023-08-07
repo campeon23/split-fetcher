@@ -25,7 +25,7 @@ func NewEncryption(log *logger.Logger) *Encryption {
 	}
 }
 
-func CreateEncryptionKey(strings []string) ([]byte, error) {
+func (e *Encryption) CreateEncryptionKey(strings []string) ([]byte, error) {
 	// Sort the strings in reverse order
 	sort.Sort(sort.Reverse(sort.StringSlice(strings)))
 
