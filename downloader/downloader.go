@@ -118,6 +118,9 @@ func (d *Downloader) DownloadPartFiles() (manifest.DownloadManifest, []string, i
 		URL:      d.UrlFile,
 		Etag:	  etag,
 		HashType: hashType,
+		Size:	  size,
+		NumParts: d.NumParts,
+		RangeSize: rangeSize,
 	}
 
 	d.Log.Debugw("Inititalizing download manifest", "downloadManifest", downloadManifest) // Add debug output
@@ -303,6 +306,7 @@ func (d *Downloader) DownloadPartFiles() (manifest.DownloadManifest, []string, i
 				PartNumber: i + 1,
 				FileHash:   sha256HashString,
 				Timestamp:  timestamp,
+				PartFile:   outputPartFile.Name(),
 			})
 
 			d.Log.Debugw(

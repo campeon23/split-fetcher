@@ -25,6 +25,9 @@ type DownloadManifest struct {
 	URL              string                `json:"url"`
 	Etag			 string                `json:"etag"`
 	HashType		 string                `json:"hash_type"`
+	Size			 int                   `json:"size"`
+	NumParts         int                   `json:"num_parts"`
+	RangeSize		 int                   `json:"range_size"`
 	DownloadedParts  []DownloadedPart      `json:"downloaded_parts"`
 }
 
@@ -32,6 +35,7 @@ type DownloadedPart struct {
 	PartNumber int    `json:"part_number"`
 	FileHash   string `json:"file_hash"`
 	Timestamp  int64  `json:"timestamp"`
+	PartFile   string `json:"part_file"`
 }
 
 func NewManifest(log *logger.Logger) *Manifest {
