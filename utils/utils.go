@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"unicode"
 
 	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/gosuri/uiprogress"
@@ -74,4 +75,13 @@ func FormatSpeed(bytes int64, totalMilliseconds int64) string {
 	}
 	unitPrefix := fmt.Sprintf("%ciB/s", "KMGTPE"[exp])
 	return fmt.Sprintf("| %.2f %s", speed/float64(div), unitPrefix)
+}
+
+func (u *Utils) TrimLeadingSymbols(s string) string {
+	for i, r := range s {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return s[i:]
+		}
+	}
+	return s
 }
