@@ -47,14 +47,14 @@ Examples:
 &nbsp;
       **Note:** If you want to change the number of parts the file is split into or change the directory where the files are saved, those options are configurable in the application. 
 
-```bash
+```go
 $ ubuntu_server="https://ftp.halifax.rwth-aachen.de/ubuntu-releases/23.04/ubuntu-23.04-netboot-amd64.tar.gz"
 
 $ ./multi-source-downloader -u $ubuntu_server
 ```
 
 2. This command directs the multi-source-downloader to download a file from $ubuntu_server in 100 parts, using a maximum of 20 connections concurrently, and validates the integrity of the download using SHA sums from $ubuntu_shasums.
-```bash
+```go
 $ ubuntu_shasums="https://ftp.halifax.rwth-aachen.de/ubuntu-releases/23.04/SHA256SUMS"
 $ ubuntu_server="https://ftp.halifax.rwth-aachen.de/ubuntu-releases/23.04/ubuntu-23.04-netboot-amd64.tar.gz"
 
@@ -62,19 +62,19 @@ $ ./multi-source-downloader -s $ubuntu_shasums -u $ubuntu_server -n 100 -c 20
 ```
 
 3. This example runs the multi-source-downloader to download a file from $ubuntu_server, specified by -u, in 10 parts (-n 10), with a maximum of 5 connections at a time (-c 5). The parts are downloaded to the download_parts directory (-p download_parts), and the integrity of the downloaded file is verified using the SHA sums from $ubuntu_shasums (-s $ubuntu_shasums). The part files are kept after assembly (-k), and verbose logging is enabled (-v).
-```bash
+```go
 $ ./multi-source-downloader -s $ubuntu_shasums -u $ubuntu_server -n 10 -c 5 -d -p download_parts -k -v
 ```
 
 4. The following command uses the multi-source-downloader to decrypt an encrypted manifest file, specified by $encrypted_manifest, with verbose logging enabled.
-```bash
+```go
 encrypted_manifest="~/.config/.multi-source-downloader/ubuntu-23.04-netboot-amd64.manifest.51628721468495e921b639a4121e7342.json.enc"
 
 $ ./multi-source-downloader -m $encrypted_manifest -f -v
 ```
 
 5. The following example instructs the multi-source-downloader to assemble parts, stored in the parts_test directory and defined by the specified manifest file ($manifest), into a final file named output.tar.gz within the assembled directory, with verbose logging enabled.
-```bash
+```go
 $ manifest="~/.config/.multi-source-downloader/ubuntu-23.04-netboot-amd64.manifest.51628721468495e921b639a4121e7342.json"
 
 $ ./multi-source-downloader -m $manifest -p parts_test -o assembled/output.tar.gz -a -v
