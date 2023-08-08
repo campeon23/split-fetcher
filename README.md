@@ -88,14 +88,14 @@ $ url_file="https://ftp.halifax.rwth-aachen.de/ubuntu-releases/23.04/ubuntu-23.0
 $ ./multi-source-downloader -s $shasums -u $url_file -n 100 -c 20
 ```
 
-1. To run the multi-source-downloader to download a file from $url_file, specified by -u, in 10 parts (-n 10), with a maximum of 5 connections at a time (-c 5). The parts are downloaded to the download_parts directory (-p download_parts), and the integrity of the downloaded file is verified using the SHA sums from $shasums (-s $shasums). The part files are kept after assembly (-k).
+3. To run the multi-source-downloader to download a file from $url_file, specified by -u, in 10 parts (-n 10), with a maximum of 5 connections at a time (-c 5). The parts are downloaded to the download_parts directory (-p download_parts), and the integrity of the downloaded file is verified using the SHA sums from $shasums (-s $shasums). The part files are kept after assembly (-k).
 
 
 ```ruby
 $ ./multi-source-downloader -s $shasums -u $url_file -n 10 -c 5 -d -p download_parts -k
 ```
 
-1. To use the multi-source-downloader to decrypt an encrypted manifest file, specified by $encrypted_manifest.
+4. To use the multi-source-downloader to decrypt an encrypted manifest file, specified by $encrypted_manifest.
 
 ```ruby
 encrypted_manifest="~/.config/.multi-source-downloader/ubuntu-23.04-netboot-amd64.manifest.51628721468495e921b639a4121e7342.json.enc"
@@ -104,9 +104,9 @@ $ ./multi-source-downloader -m $encrypted_manifest -f
 ```
 
 &nbsp;
-           **Note:** To decrypt the manifest file, access to the parts files is essential. These files, which are integral to the assembly of the final file, must be reachable for the application to operate properly. If the application cannot access these parts files, the decryption process will fail and the assembly of the final file will not be possible. Therefore, before you run the application, ensure that the parts files are accessible.
+**Note:** To decrypt the manifest file, access to the parts files is essential. These files, which are integral to the assembly of the final file, must be reachable for the application to operate properly. If the application cannot access these parts files, the decryption process will fail and the assembly of the final file will not be possible. Therefore, before you run the application, ensure that the parts files are accessible.
 
-1. The following example instructs the multi-source-downloader to assemble parts, stored in the parts_test directory and defined by the specified manifest file ($manifest), into a final file named output.tar.gz within the assembled directory.
+5. The following example instructs the multi-source-downloader to assemble parts, stored in the parts_test directory and defined by the specified manifest file ($manifest), into a final file named output.tar.gz within the assembled directory.
 
 ```go
 $ manifest="~/.config/.multi-source-downloader/ubuntu-23.04-netboot-amd64.manifest.51628721468495e921b639a4121e7342.json"
