@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/multi-source-downloader/utils"
 )
 
 type Hasher struct {
@@ -31,6 +32,7 @@ func NewHasher(log *logger.Logger) *Hasher {
 }
 
 func (h *Hasher) DownloadAndParseHashFile(shaSumsURL string) (map[string]string, error) {
+	u := utils.NewUtils("", h.Log)
 	if h.Log == nil {
 		fmt.Println("Error: Logger not initialized in hasher!")
 		return nil, fmt.Errorf("logger not initialized in hasher")
@@ -49,20 +51,23 @@ func (h *Hasher) DownloadAndParseHashFile(shaSumsURL string) (map[string]string,
 	lines := strings.Split(string(content), "\n")
 	hashes := make(map[string]string)
 	for _, line := range lines {
-		parts := strings.SplitN(line, "*", 2)
-		h.Log.Debugw(
-			"Parsing content from hashes file.", 
-			"lenght", len(parts), 
-			"parts", parts,
-		) // Add debug output
-		if len(parts) != 2 {
-			continue
+		if line != "" {
+			parts := strings.SplitN(line, " ", 2)
+			parts[1] = u.TrimLeadingSymbols(parts[1])
+			h.Log.Debugw(
+				"Parsing content from hashes file.", 
+				"lenght", len(parts), 
+				"parts", parts,
+			) // Add debug output
+			if len(parts) != 2 {
+				continue
+			}
+
+			hash := strings.TrimSpace(parts[0])
+			fileName := strings.TrimSpace(parts[1])
+
+			hashes[fileName] = hash
 		}
-
-		hash := strings.TrimSpace(parts[0])
-		fileName := strings.TrimSpace(parts[1])
-
-		hashes[fileName] = hash
 	}
 
 	h.Log.Debugw(
@@ -126,7 +131,7 @@ func (h *Hasher) ValidateFileIntegrity(fileName, originalFileName, hashType, eta
 	case hashType == "unknown":
 		h.Log.Infow("Unknown Etag format, cannot check hash")
 	case ok:
-		if hash == fileHash.Sha256 {
+		if hash == fileHash.Sha256 || hash == fileHash.Sha1 || hash == fileHash.Md5 {
 			h.Log.Infow("File hash matches hash from SHA sums file")
 		} else {
 			h.Log.Infow("File hash does not match hash from SHA sums file")

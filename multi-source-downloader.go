@@ -73,7 +73,7 @@ or if you set it to 0, it will choose the best number for you.`)
 with either MD5 or SHA-256 hashes, used to verify the integrity and 
 authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&urlFile, 		"url", 			 "u", "",			"(Required) URL of the file to download")
-	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 "n", 5, 	 		"(Optional) Number of parts to split the download into")
+	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 "n", 2, 	 		"(Optional) Number of parts to split the download into")
 	rootCmd.PersistentFlags().StringVarP(&partsDir, 	"parts-dir", 	 "p", "", 	 		"(Optional) The directory to save the parts files")
 	rootCmd.PersistentFlags().StringVarP(&prefixParts, 	"prefix-parts",  "x", "output-", 	"(Optional) The prefix to use for naming the parts files")
 	rootCmd.PersistentFlags().BoolVarP(&keepParts, 		"keep-parts", 	 "k", false, 		"(Optional) Whether to keep the parts files after assembly")
@@ -200,7 +200,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 
 func execute(cmd *cobra.Command, args []string) {
 	log = logger.InitLogger(verbose) // Keep track of returned logger
-    log.Infow("Logger initialized")
+    log.Debugw("Logger initialized")
 
 	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(log)

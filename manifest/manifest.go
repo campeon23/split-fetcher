@@ -95,7 +95,7 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName stri
 			return errors.New("Error deleting manifest file: " + err.Error())
 		}
 	} else {
-		m.Log.Infow("Manifest file not found", "file: ", manifestPath)
+		m.Log.Debugw("Manifest file not found", "file: ", manifestPath)
 	}
 
 	file, err := os.Create(manifestPath)
