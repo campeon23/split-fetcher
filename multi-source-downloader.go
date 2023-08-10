@@ -23,6 +23,7 @@ var (
 	numParts 					int
 	partsDir 					string
 	prefixParts 				string
+	proxy 						string
 	keepParts 					bool
 	decryptManifest 			bool
 	manifestFile 				string
@@ -50,6 +51,7 @@ validation, to ensure file integrity. And more things...`,
         outputFile 	 = viper.GetString("output")
 		partsDir 	 = viper.GetString("parts-dir")
 		prefixParts	 = viper.GetString("prefix-parts")
+		proxy 		 = viper.GetString("proxy")
 		keepParts 	 = viper.GetBool("keep-parts")
 
 		// Process the partsDir value
@@ -71,6 +73,7 @@ authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 "n", 2, 	 		"(Optional) Number of parts to split the download into")
 	rootCmd.PersistentFlags().StringVarP(&partsDir, 	"parts-dir", 	 "p", "", 	 		"(Optional) The directory to save the parts files")
 	rootCmd.PersistentFlags().StringVarP(&prefixParts, 	"prefix-parts",  "x", "output", 	"(Optional) The prefix to use for naming the parts files")
+	rootCmd.PersistentFlags().StringVarP(&proxy, 		"proxy", 		 "r", "", 	 		"(Optional) Proxy to use for the download")
 	rootCmd.PersistentFlags().BoolVarP(&keepParts, 		"keep-parts", 	 "k", false, 		"(Optional) Whether to keep the parts files after assembly")
 	rootCmd.PersistentFlags().BoolVarP(&decryptManifest, "decrypt-manifest", "f", false, 	"(Optional) If true, decrypts the manifest file")
 	rootCmd.PersistentFlags().StringVarP(&manifestFile, "manifest-file", "m", "", 	 		"(Required by --assemble-only) Manifest file (must be decrypted) to pass to the main function")
@@ -86,6 +89,7 @@ only output INFO logging.`)
 	viper.BindPFlag("num-parts", 		rootCmd.PersistentFlags().Lookup("num-parts"))
 	viper.BindPFlag("parts-dir", 		rootCmd.PersistentFlags().Lookup("parts-dir"))
 	viper.BindPFlag("prefix-parts", 	rootCmd.PersistentFlags().Lookup("prefix-parts"))
+	viper.BindPFlag("proxy", 			rootCmd.PersistentFlags().Lookup("proxy"))
 	viper.BindPFlag("keep-parts", 		rootCmd.PersistentFlags().Lookup("keep-parts"))
 	viper.BindPFlag("decrypt-manifest", rootCmd.PersistentFlags().Lookup("decrypt-manifest"))
 	viper.BindPFlag("manifest-file", 	rootCmd.PersistentFlags().Lookup("manifest-file"))
@@ -132,7 +136,7 @@ func processPartsDir() {
 
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string){
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
-	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, log)
+	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(partsDir, prefixParts, log)
 	h := hasher.NewHasher(log)
@@ -189,7 +193,7 @@ func execute(cmd *cobra.Command, args []string) {
     log.Debugw("Logger initialized")
 
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
-	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, log)
+	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(partsDir, prefixParts, log)
 	h := hasher.NewHasher(log)
