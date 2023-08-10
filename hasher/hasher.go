@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/campeon23/multi-source-downloader/logger"
@@ -116,10 +118,10 @@ func (h *Hasher) CalculateSHA256(filename string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func (h *Hasher) ValidateFileIntegrity(fileName, originalFileName, hashType, etag string, hash string, ok bool) {
+func (h *Hasher) ValidateFileIntegrity(fileName, hashType, etag string, hash string, ok bool) {
 	fileHash, err := h.HashFile(fileName)
 	if err != nil {
-		h.Log.Fatalw("Error: ", "error", err)
+		h.Log.Fatalf("Failed to obtained the file hash: %v", "error", err)
 	}
 
 	// Validate the assembled file integrity and authenticity
@@ -141,5 +143,49 @@ func (h *Hasher) ValidateFileIntegrity(fileName, originalFileName, hashType, eta
 	}
 }
 
+func (h *Hasher) HashesFromFiles(partsDir, prefixParts, hashType string) ([]string, error) {
+	// Search for all $prefixParts* files in the current directory
+	var partFilesHashes []string
+	err := filepath.Walk(partsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("prevent panic by handling failure accessing a path %q: %v", path, err)
+		}
+
+		if !info.IsDir() && strings.HasPrefix(info.Name(), prefixParts) {
+			h.Log.Debugw("Part file found", "file", path)
+
+			// Open the temporary part file
+			outputPartFile, err := os.Open(path)
+			if err != nil {
+				return fmt.Errorf("failed to open the temporary part file: %v", err)
+			}
+			defer outputPartFile.Close()
+
+			// Initialize hash based on hashType
+			var hash hash.Hash
+			switch hashType {
+			case "sha256":
+				hash = sha256.New()
+			case "md5":
+				hash = md5.New()
+			case "sha1":
+				hash = sha1.New()
+			default:
+				return fmt.Errorf("unsupported hash type: %s", hashType)
+			}
+
+			// Calculate the hash from the temporary part file
+			if _, err := io.Copy(hash, outputPartFile); err != nil {
+				return fmt.Errorf("failed to calculate the hash from the temporary part file: %v", err)
+			}
+			hashedValue := hash.Sum(nil)
+			hashedValueString := hex.EncodeToString(hashedValue[:])
+			partFilesHashes = append(partFilesHashes, hashedValueString)
+		}
+		return nil
+	})
+
+	return partFilesHashes, err
+}
 
 

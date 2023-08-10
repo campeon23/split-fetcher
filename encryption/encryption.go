@@ -11,21 +11,27 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/logger"
 	"golang.org/x/crypto/pbkdf2"
 )
 
 type Encryption struct {
-	Log	*logger.Logger
+	PartsDir		string
+	PrefixParts		string
+	Log			*logger.Logger
 }
 
-func NewEncryption(log *logger.Logger) *Encryption {
+func NewEncryption(partsDir string, prefixParts string,log *logger.Logger) *Encryption {
 	return &Encryption{
+		PartsDir: partsDir,
+		PrefixParts: prefixParts,
 		Log: log,
 	}
 }
 
 func (e *Encryption) CreateEncryptionKey(strings []string) ([]byte, error) {
+	f := fileutils.NewFileutils(e.PartsDir, e.PrefixParts, e.Log)
 	// Sort the strings in reverse order
 	sort.Sort(sort.Reverse(sort.StringSlice(strings)))
 
@@ -35,8 +41,14 @@ func (e *Encryption) CreateEncryptionKey(strings []string) ([]byte, error) {
 		buffer.WriteString(str)
 	}
 
+	hashStr, err := f.CombinedMD5HashForPrefixedFiles(e.PartsDir, e.PrefixParts)
+	if err != nil {
+		return nil, err
+	}
+
 	// Use the concatenated string with PBKDF2 to derive a key
-	salt := []byte("your-salt") // Use a constant or random salt as needed
+	salt := []byte(hashStr) // Use a constant or random salt as needed
+
 	key := pbkdf2.Key([]byte(buffer.Bytes()), salt, 4096, 32, sha256.New) // Pass the buffer as a byte slice
 
 	return key, nil

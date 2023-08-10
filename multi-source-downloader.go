@@ -1,10 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +14,6 @@ import (
 	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/hasher"
 	"github.com/campeon23/multi-source-downloader/logger"
-	"github.com/campeon23/multi-source-downloader/manifest"
 )
 
 var (
@@ -75,7 +70,7 @@ authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&urlFile, 		"url", 			 "u", "",			"(Required) URL of the file to download")
 	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 "n", 2, 	 		"(Optional) Number of parts to split the download into")
 	rootCmd.PersistentFlags().StringVarP(&partsDir, 	"parts-dir", 	 "p", "", 	 		"(Optional) The directory to save the parts files")
-	rootCmd.PersistentFlags().StringVarP(&prefixParts, 	"prefix-parts",  "x", "output-", 	"(Optional) The prefix to use for naming the parts files")
+	rootCmd.PersistentFlags().StringVarP(&prefixParts, 	"prefix-parts",  "x", "output", 	"(Optional) The prefix to use for naming the parts files")
 	rootCmd.PersistentFlags().BoolVarP(&keepParts, 		"keep-parts", 	 "k", false, 		"(Optional) Whether to keep the parts files after assembly")
 	rootCmd.PersistentFlags().BoolVarP(&decryptManifest, "decrypt-manifest", "f", false, 	"(Optional) If true, decrypts the manifest file")
 	rootCmd.PersistentFlags().StringVarP(&manifestFile, "manifest-file", "m", "", 	 		"(Required by --assemble-only) Manifest file (must be decrypted) to pass to the main function")
@@ -138,24 +133,16 @@ func processPartsDir() {
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string){
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
 	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, log)
-	e := encryption.NewEncryption(log)
-	f := fileutils.NewFileutils(log)
+	e := encryption.NewEncryption(partsDir, prefixParts, log)
+	f := fileutils.NewFileutils(partsDir, prefixParts, log)
 	h := hasher.NewHasher(log)
 
 	appRoot, _ := f.EnsureAppRoot()
 
-	downloadManifest, hashes, manifestPath, key, size, rangeSize, fileName, _, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
+	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
 	if err != nil {
 		log.Fatalw("Error: ", err)
 	}
-
-	originalFileName := fileName
-
-	outFile, err := f.CreateFile(fileName)
-	if err != nil {
-		log.Fatalw("Found path in string. Faied to create file.", "error", err.Error())
-	}
-	defer outFile.Close()
 
 	// Decrypt the downloaded manifest
 	var decryptedContent []byte
@@ -165,18 +152,17 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		return
 	}
 
-	// Decode the JSON content into a map
-	var manifest manifest.DownloadManifest // The JSON structure defined above as DownloadManifest
-	err = json.Unmarshal(decryptedContent, &manifest)
+	manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, decryptedContent)
 	if err != nil {
-		log.Fatalw("Decoding decrypted content: ", "error", err.Error())
+		log.Fatalf("Failed to prepare assembly environment: %v\n", err)
 	}
+	defer outFile.Close() // Close the file after the function returns
 
 	// Clean memory after decoding content
 	decryptedContent = nil
 
 	// Assemble the file from the downloaded parts
-	a.AssembleFileFromParts(downloadManifest, outFile, size, rangeSize, hasher.Hasher{})
+	a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{})
 
 	if !keepParts { // If keepParts is false, remove the part file
 		// If partsDir was provided
@@ -193,17 +179,19 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		}
 	}
 
-	hash, ok := hashes[originalFileName] // This should be in the same method or function as your switch statement.
+	hash, ok := hashes[manifest.Filename] // This should be in the same method or function as the switch statement.
 
-	h.ValidateFileIntegrity(fileName, originalFileName, hashType, etag, hash, ok)
+	h.ValidateFileIntegrity(outputPath, hashType, etag, hash, ok)
 }
 
 func execute(cmd *cobra.Command, args []string) {
 	log = logger.InitLogger(verbose) // Keep track of returned logger
     log.Debugw("Logger initialized")
 
+	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
 	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, log)
-	f := fileutils.NewFileutils(log)
+	e := encryption.NewEncryption(partsDir, prefixParts, log)
+	f := fileutils.NewFileutils(partsDir, prefixParts, log)
 	h := hasher.NewHasher(log)
 
 	if decryptManifest {
@@ -214,36 +202,8 @@ func execute(cmd *cobra.Command, args []string) {
         if partsDir == "" || manifestFile == "" {
             log.Fatalw("Error: --decrypt-manifest requires --parts-dir and --manifest-file")
         }
-        
-        e := encryption.NewEncryption(log)
 
-		// Search for all $prefixParts* files in the current directory
-		var partFilesHashes []string
-		err := filepath.Walk(partsDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				log.Fatalf("Prevent panic by handling failure accessing a path %q: %v\n", path, err)
-			}
-
-			if !info.IsDir() && strings.HasPrefix(info.Name(), prefixParts) {
-				log.Debugw("Part file found", "file", path)
-				// Open the temporary part file
-				outputPartFile, err := os.Open(path)
-				if err != nil {
-					log.Fatalf("Failed to open the temporary part file: %v\n", err)
-				}
-				defer outputPartFile.Close()
-
-				// Calculate the hash from the temporary part file
-				h := sha256.New()
-				if _, err := io.Copy(h, outputPartFile); err != nil {
-					log.Fatalf("Failed to calculate the hash from the temporary part file: %v\n", err)
-				}
-				sha256Hash := h.Sum(nil)
-				sha256HashString := hex.EncodeToString(sha256Hash[:])
-				partFilesHashes = append(partFilesHashes, sha256HashString)
-			}
-			return nil
-		})
+		partFilesHashes, err := h.HashesFromFiles(partsDir, prefixParts, "sha256")
 		if err != nil {
 			log.Fatalf("Failed to search for files in the current directory: %v\n", err)
 		}
@@ -275,34 +235,11 @@ func execute(cmd *cobra.Command, args []string) {
 				log.Fatalw("Loading manifest file: ", "error", err.Error())
 			}
 
-			// Decode the JSON content into a map
-			var manifest manifest.DownloadManifest
-			err = json.Unmarshal(manifestContent, &manifest)
+			manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, manifestContent)
 			if err != nil {
-				log.Fatalw("Decoding manifest content: ", "error", err.Error())
+				log.Fatalf("Failed to prepare assembly environment: %v\n", err)
 			}
-
-			if outputFile == "" {
-				outputFile = manifest.Filename
-			}
-
-			filePath, fileName, err := f.ExtractPathAndFile(outputFile)
-			if err != nil {
-				log.Fatalf("Could not parse the string:%v", err.Error())
-			}
-
-			if fileName == "" {
-				outputFile = filepath.Join(filePath, manifest.Filename)
-			}
-
-			// Ensure the directory where the output file will be saved exists
-			outFile, err := f.CreateFile(outputFile)
-			if err != nil {
-				log.Fatalw("Error: Found path in string. Faied to create file.", err.Error())
-			}
-			defer outFile.Close()
-			
-			a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
+			defer outFile.Close() // Close the file after the function returns
 
 			a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{}) // make sure to modify this method to receive and handle your manifest file
 
@@ -310,7 +247,7 @@ func execute(cmd *cobra.Command, args []string) {
 			ok := hash != ""
 
 			// Validate the file integrity
-			h.ValidateFileIntegrity(outputFile, manifest.Filename, manifest.HashType, manifest.Etag, hash, ok)
+			h.ValidateFileIntegrity(outputPath, manifest.HashType, manifest.Etag, hash, ok)
 
 		} else {
 			log.Fatalw("Error: manifest file not found")
