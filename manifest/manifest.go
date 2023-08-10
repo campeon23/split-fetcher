@@ -15,7 +15,9 @@ import (
 )
 
 type Manifest struct {
-	Log	*logger.Logger
+	PartsDir		string
+	PrefixParts		string
+	Log				*logger.Logger
 }
 
 // Adding a new structure to represent the JSON manifest
@@ -40,15 +42,17 @@ type DownloadedPart struct {
 	PartFile   string `json:"part_file"`
 }
 
-func NewManifest(log *logger.Logger) *Manifest {
+func NewManifest(partsDir string, prefixParts string, log *logger.Logger) *Manifest {
 	return &Manifest{
+		PartsDir: partsDir,
+		PrefixParts: prefixParts,
 		Log: log,
 	}
 }
 
 func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string, error)  {
 	// Remove all extensions from the filename, in case file contains multiple extensions or just one
-	f := fileutils.NewFileutils(m.Log)
+	f := fileutils.NewFileutils(m.PartsDir, m.PrefixParts, m.Log)
 	fileName = f.RemoveExtensions(fileName)
 
 	var path string
@@ -66,7 +70,7 @@ func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string
 }
 
 func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName string, hash string) error {
-	f := fileutils.NewFileutils(m.Log)
+	f := fileutils.NewFileutils(m.PartsDir, m.PrefixParts, m.Log)
 	m.Log.Debugw("Initializing Config Directory")
 
 	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)

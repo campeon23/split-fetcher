@@ -1,12 +1,14 @@
 package assembler
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 
+	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/hasher"
 	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/campeon23/multi-source-downloader/manifest"
@@ -102,4 +104,52 @@ func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, ou
 	a.Log.Infow("File downloaded and assembled")
 
 	return nil
+}
+
+func (a *Assembler) PrepareAssemblyEnviroment(outputFile string, manifestContent []byte) (manifest.DownloadManifest, *os.File, string, error) {
+	f := fileutils.NewFileutils(a.PartsDir, a.PrefixParts, a.Log)
+	// Validate the path of output file
+		message, err := f.ValidatePath(outputFile)
+		if err != nil {
+			f.Log.Fatalw("Found an error validating path string.", err.Error())
+		} else {
+			f.Log.Debugw(message)
+		}
+
+		// Extract the path and filename from the output file
+		filePath, fileName, err := f.ExtractPathAndFilename(outputFile)
+		if err != nil {
+			f.Log.Fatalf("Could not parse the string:%v", err.Error())
+		}
+
+		// Validate the path of the output file
+		if filePath != "" {
+			err = f.ValidateCreatePath(filePath)
+			if err != nil {
+				f.Log.Fatalw("Found an error validating path string: %s", err.Error())
+			}
+		}
+
+		// Decode the JSON content into a map
+		var manifest manifest.DownloadManifest
+		err = json.Unmarshal(manifestContent, &manifest)
+		if err != nil {
+			f.Log.Fatalw("Decoding manifest content: ", "error", err.Error())
+		}
+
+		// Get the output filename from the manifest, if return filename is empty
+		if fileName == "" {
+			fileName = manifest.Filename
+		}
+
+		outputPath := filepath.Join(filePath, fileName)
+
+		// Ensure the directory where the output file will be saved exists
+		outFile, err := f.CreateFile(outputPath)
+		if err != nil {
+			f.Log.Fatalw("Error: Found path in string. Faied to create file.", err.Error())
+		}
+		// defer outFile.Close()
+
+		return manifest, outFile, outputPath, err
 }

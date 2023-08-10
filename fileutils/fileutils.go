@@ -3,8 +3,11 @@ package fileutils
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -13,11 +16,15 @@ import (
 )
 
 type Fileutils struct {
+	PartsDir	string
+	PrefixParts	string
 	Log	*logger.Logger
 }
 
-func NewFileutils(log *logger.Logger) *Fileutils {
+func NewFileutils(partsDir string, prefixParts string, log *logger.Logger) *Fileutils {
 	return &Fileutils{
+		PartsDir: partsDir,
+		PrefixParts: prefixParts,
 		Log: log,
 	}
 }
@@ -71,27 +78,11 @@ func (f *Fileutils) RemoveExtensions(filename string) string {
 }
 
 func (f *Fileutils) CombinedMD5HashForPrefixedFiles(dir string, prefix string) (string, error) {
-	var hashes []string
+	h := hasher.NewHasher(f.Log)
 
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() && strings.HasPrefix(filepath.Base(path), prefix) {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-
-			hash := md5.Sum(data)
-			hashes = append(hashes, hex.EncodeToString(hash[:]))
-		}
-		return nil
-	})
-
+	hashes, err := h.HashesFromFiles(dir, prefix, "md5")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to search for files in the current directory: %v", err)
 	}
 
 	sort.Strings(hashes)
@@ -130,22 +121,87 @@ func (f *Fileutils) EnsureAppRoot() (string, error) {
 	return appRoot, nil
 }
 
-func (f *Fileutils) ExtractPathAndFile(input string) (dir, filename string, err error) {
-	dir, filename = filepath.Split(input)
-
-    f.Log.Debugw("Extracted path and file",
-        "dir", dir,
-        "filename", filename,
-    )
-
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		err = os.MkdirAll(dir, os.ModePerm)
+func (f *Fileutils) ValidateCreatePath(path string) (error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		err = os.MkdirAll(path, os.ModePerm)
 		if err != nil {
-			return dir, filename, err
+			return err
 		}
 	} else if err != nil {
-		return dir, filename, err
+		return err
 	}
 
-	return dir, filename, nil
+	return nil
+}
+
+// ExtractDirFilename extracts the directory and filename from a given path.
+func (f *Fileutils) ExtractPathAndFilename(path string) (string, string, error) {
+	parts := strings.Split(path, "/")
+
+	directory := ""
+	filename := ""
+
+	// If path ends with '/', it's a directory
+	if strings.HasSuffix(path, "/") {
+		directory = strings.Join(parts[:len(parts)-1], "/")
+	} else {
+		if len(parts) > 1 {
+			directory = strings.Join(parts[:len(parts)-1], "/")
+			filename = parts[len(parts)-1]
+		} else {
+			filename = parts[0]
+		}
+	}
+	f.Log.Debugw(
+		"Extracting directory and filename from path", 
+		"path", path,
+		"parts", parts,
+		"filename", filename,
+		"directory", directory,
+	)
+	
+	return directory, filename, nil
+}
+
+// ValidatePath checks if the given path adheres to our constraints.
+func (f *Fileutils) ValidatePath(path string) (string, error) {
+	// Check for path escaping out of home directory
+	if strings.Contains(path, "../") {
+		return "", errors.New("Invalid path - escaping directory not allowed")
+	}
+
+	// Check for root directory
+	if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "./") && !strings.HasPrefix(path, "~/") {
+		return "", errors.New("Invalid path - outside home directory not allowed")
+	}
+
+	// Regular expression for valid directory and path names
+	dirRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	filenameRegex := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
+	// Split path and validate each part
+	parts := strings.Split(path, "/")
+	f.Log.Debugw(
+		"Validating path", 
+		"parts", parts,
+	)
+	for _, part := range parts {
+		if part == "." || part == "~" || part == "" {
+			continue
+		}
+		if !dirRegex.MatchString(part) && !filenameRegex.MatchString(part) {
+			return "", errors.New("Invalid character in path or filename")
+		}
+	}
+
+	// Check for valid paths starting with ~ or ./
+	if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "~/") {
+		directory, filename, err := f.ExtractPathAndFilename(path)
+		if err != nil {
+			return "", errors.New("Invalid path format")
+		}
+		return fmt.Sprintf("Valid path. Directory: %s. Filename: %s", directory, filename), nil
+	}
+
+	return "", nil
 }

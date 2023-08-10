@@ -60,7 +60,7 @@ func (d *Downloader) makeHTTPClient() (*http.Client, error) {
 	}, nil
 }
 
-func (d *Downloader) initDownloadManifest(fileName, hash, etag, hashType string, size, rangeSize int) manifest.DownloadManifest {
+func (d *Downloader) InitDownloadManifest(fileName, hash, etag, hashType string, size, rangeSize int) manifest.DownloadManifest {
 	return manifest.DownloadManifest{
 		Version:  "1.0",
 		UUID:     uuid.New().String(),
@@ -75,7 +75,7 @@ func (d *Downloader) initDownloadManifest(fileName, hash, etag, hashType string,
 	}
 }
 
-func (d *Downloader) downloadPart(client *http.Client, i, rangeSize, size int, sem chan struct{}, maxProgressFileNameLen int, progressBars []*uiprogress.Bar, partFilesHashes []string, speed atomic.Value, downloadManifest *manifest.DownloadManifest, wg *sync.WaitGroup) {
+func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, sem chan struct{}, maxProgressFileNameLen int, progressBars []*uiprogress.Bar, partFilesHashes []string, speed atomic.Value, downloadManifest *manifest.DownloadManifest, wg *sync.WaitGroup) {
 	go func(i int) {
 		if d.MaxConcurrentConnections != 0 {
 			sem <- struct{}{} // acquire a token
@@ -87,7 +87,7 @@ func (d *Downloader) downloadPart(client *http.Client, i, rangeSize, size int, s
 		timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
 
 		progressFileName := fmt.Sprintf("output part %d", i+1)
-		outputPartFileName := fmt.Sprintf("%s%s%s-%d.part", d.PartsDir, d.PrefixParts, uuid.New(), i+1)
+		outputPartFileName := fmt.Sprintf("%s%s-%s-%d.part", d.PartsDir, d.PrefixParts, uuid.New(), i+1)
 
 		d.Log.Debugw("Debugging part files paths",
 			"outputPartFileName", outputPartFileName,
@@ -216,7 +216,7 @@ func (d *Downloader) downloadPart(client *http.Client, i, rangeSize, size int, s
 		// Close the file before renaming
 		outputPartFile.Close()
 
-		partFileName := fmt.Sprintf("%s%s%s-%d.part", d.PartsDir, d.PrefixParts, sha256HashString, timestamp)
+		partFileName := fmt.Sprintf("%s%s-%s-%d.part", d.PartsDir, d.PrefixParts, sha256HashString, timestamp)
 		if err := os.Rename(outputPartFileName, partFileName); err != nil {
 			d.Log.Fatalw("Error: Failed to rename the part file", "error", err)
 		}
@@ -265,7 +265,7 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 
 	d.Log.Infow("Performing HTTP request") // Add debug output
 
-	size, etag, hashType, err := d.getFileInfo(client)
+	size, etag, hashType, err := d.GetFileInfo(client)
 	if err != nil {
 		return manifest.DownloadManifest{}, nil, 0, "", "", 0, "", fmt.Errorf("failed to get file info: %w", err)
 	}
@@ -295,7 +295,7 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 	hash := hashes[fileName]
 
 	// Create and initialize the download manifest
-	downloadManifest := d.initDownloadManifest(fileName, hash, etag, hashType, size, rangeSize)
+	downloadManifest := d.InitDownloadManifest(fileName, hash, etag, hashType, size, rangeSize)
 
 	d.Log.Debugw("Inititalizing download manifest", "downloadManifest", downloadManifest) // Add debug output
 
@@ -316,7 +316,7 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 	}
 
 	for i := 0; i < d.NumParts; i++ {
-		go d.downloadPart(client, i, rangeSize, size, sem, maxProgressFileNameLen, progressBars, partFilesHashes, speed, &downloadManifest, &wg)
+		go d.DownloadPart(client, i, rangeSize, size, sem, maxProgressFileNameLen, progressBars, partFilesHashes, speed, &downloadManifest, &wg)
 	}
 
 	wg.Wait()
@@ -327,7 +327,7 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 	return downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName, err
 }
 
-func (d *Downloader) getFileInfo(client *http.Client) (size int, etag string, hashType string, err error) {
+func (d *Downloader) GetFileInfo(client *http.Client) (size int, etag string, hashType string, err error) {
 	req, err := http.NewRequest("HEAD", d.URLFile, nil)
 	if err != nil {
 		return 0, "", "", fmt.Errorf("failed to create HTTP request: %w", err)
@@ -367,12 +367,11 @@ func (d *Downloader) getFileInfo(client *http.Client) (size int, etag string, ha
 	return size, etag, hashType, err
 }
 
-func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts string, urlFile string, downloadOnly bool, outputFile string) (manifest.DownloadManifest, map[string]string, string, []byte, int, int, string, string, string, string, error){
-	// d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, log)
-	e := encryption.NewEncryption(d.Log)
-	f := fileutils.NewFileutils(d.Log)
+func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts string, urlFile string, downloadOnly bool, outputFile string) (manifest.DownloadManifest, map[string]string, string, []byte, int, int, string, string, error){
+	e := encryption.NewEncryption(d.PartsDir, d.PrefixParts, d.Log)
+	f := fileutils.NewFileutils(d.PartsDir, d.PrefixParts, d.Log)
 	h := hasher.NewHasher(d.Log)
-	m := manifest.NewManifest(d.Log)
+	m := manifest.NewManifest(d.PartsDir, d.PrefixParts, d.Log)
 
 	if urlFile == "" {
 		if downloadOnly {
@@ -395,15 +394,27 @@ func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts st
 	}
 
 	if !downloadOnly {
-		if outputFile != "" {
-			fileName = outputFile
+		// Validate the path of output file
+		message, err := f.ValidatePath(outputFile)
+		if err != nil {
+			d.Log.Fatalw("Found an error validating path string.", err.Error())
+		} else {
+			d.Log.Debugw(message)
 		}
 
-		outFile, err := f.CreateFile(fileName)
+		// Extract the path and filename from the output file
+		filePath, _, err := f.ExtractPathAndFilename(outputFile)
 		if err != nil {
-			d.Log.Fatalw("Found path in string. Faied to create file.", "error", err.Error())
+			d.Log.Fatalf("Could not parse the string:%v", err.Error())
 		}
-		defer outFile.Close()
+
+		// Validate the path of the output file
+		if filePath != "" {
+			err = f.ValidateCreatePath(filePath)
+			if err != nil {
+				d.Log.Fatalw("Found an error validating path string: %s", err.Error())
+			}
+		}
 	}
 
 	m.SaveDownloadManifest(downloadManifest, fileName, hash)
@@ -435,5 +446,5 @@ func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts st
 		d.Log.Infow("Part files saved to directory", "directory", partsDir)
 	}
 
-	return downloadManifest, hashes, manifestPath, key, size, rangeSize, fileName, hash, etag, hashType, err
+	return downloadManifest, hashes, manifestPath, key, size, rangeSize, etag, hashType, err
 }
