@@ -32,16 +32,18 @@ type Downloader struct {
 	MaxConcurrentConnections 	int
 	PartsDir 					string
 	PrefixParts 				string
+	Proxy 						string
 	Log							*logger.Logger
 }
 
-func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, prefixParts string, log *logger.Logger) *Downloader {
+func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, prefixParts string, proxy string, log *logger.Logger) *Downloader {
 	return &Downloader{
 		URLFile: urlFile, 
 		NumParts: numParts,
 		MaxConcurrentConnections: maxConcurrentConnections,
 		PartsDir: partsDir,
 		PrefixParts: prefixParts,
+		Proxy: proxy,
 		Log: log,
 	}
 }
@@ -52,10 +54,42 @@ func (d *Downloader) initUIAndDownloadParameters() (int, atomic.Value) {
 	return 0, speed
 }
 
+// A simple function to check if a string starts with "http://"
+func startsWithHTTP(s string) bool {
+	return len(s) >= 7 && s[0:7] == "http://"
+}
+
 func (d *Downloader) makeHTTPClient() (*http.Client, error) {
+	// Create a custom HTTP client
+	var proxyFunc func(*http.Request) (*url.URL, error)
+	if d.Proxy != "" {
+		// Ensure the proxy has the correct format
+		if !startsWithHTTP(d.Proxy) {
+			d.Proxy = "http://" + d.Proxy
+		}
+		proxyURL, err := url.Parse(d.Proxy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL: %w", err)
+		}
+		proxyFunc = http.ProxyURL(proxyURL)
+		d.Log.Debugw(
+			"Using proxy url", 
+			"proxyURL", proxyURL,
+		)
+	} else {
+		proxyFunc = http.ProxyFromEnvironment
+	}
+
+	d.Log.Debugw(
+			"Using proxy function", 
+			"proxy", d.Proxy,
+			"proxyFunc", proxyFunc,
+		)
+
 	return &http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout: 60 * time.Second,
+			Proxy:               proxyFunc,
 		},
 	}, nil
 }
