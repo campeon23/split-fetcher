@@ -36,9 +36,12 @@ type ProgressWriter struct {
 }
 
 func (pw *ProgressWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	pw.Bar.Set(pw.Bar.Current() + n)
-	return pw.W.Write(p)
+	// n := len(p)
+	// pw.Bar.Set(pw.Bar.Current() + n)
+	// return pw.W.Write(p)
+	n, err := pw.W.Write(p)
+	pw.Bar.Incr()
+	return n, err
 }
 
 func FormatFileSize(bytes int64) string {
