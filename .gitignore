@@ -11,6 +11,13 @@
 # Compiled binary
 multi-source-downloader
 
+# Archives files
+
+*.tar.gz
+
+# Build Directories
+Final
+
 # MacOs files
 .DS_Store
 
@@ -34,3 +41,5 @@ multi-source-downloader
 
 # Go workspace file
 go.work
+
+dist/
