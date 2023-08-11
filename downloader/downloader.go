@@ -180,7 +180,7 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 		}
 		defer resp.Body.Close()
 
-		buf := utils.BufferPool.Get().([]byte) // Get a buffer from the pool
+		buf := utils.BufferPool.Get().(*[]byte) // Get a buffer from the pool
 		defer func() { 
 			utils.BufferPool.Put(buf) 
 		}() // Return the buffer to the pool when done
@@ -199,10 +199,10 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 		startTime := time.Now() // record start time of reading chunk
 		for {
 			// read a chunk
-			bytesRead, err := reader.Read(buf)
+			bytesRead, err := reader.Read(*buf)
 			if bytesRead > 0 {
 				// write a chunk
-				_, err := writer.Write(buf[:bytesRead])
+				_, err := writer.Write((*buf)[:bytesRead])
 				if err != nil {
 					d.Log.Fatalw("Error: Failed to write a chunk: ", "error", err)
 				}

@@ -13,7 +13,8 @@ import (
 // Define a buffer pool globally to reuse buffers
 var BufferPool = &sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 4096) // Fixed buffer size for efficient memory usage
+		b := make([]byte, 4096) // Fixed buffer size for efficient memory usage
+		return &b
 	},
 }
 
