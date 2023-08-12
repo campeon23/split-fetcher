@@ -215,7 +215,10 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 				totalBytesDownloaded += int64(bytesRead)
 
 				// update progress bar
-				bar.Set(int(totalBytesDownloaded)) // update the progress bar to the current total bytes downloaded
+				err = bar.Set(int(totalBytesDownloaded)) // update the progress bar to the current total bytes downloaded
+				if err != nil {
+					return 
+				}
 			}
 
 			// handle end or error
@@ -451,7 +454,10 @@ func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts st
 		}
 	}
 
-	m.SaveDownloadManifest(downloadManifest, fileName, hash)
+	err = m.SaveDownloadManifest(downloadManifest, fileName, hash)
+	if err != nil {
+		return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed updating the progress bar: %v", err)
+	}
 
 	key, err := e.CreateEncryptionKey(partFilesHashes)
 	if err != nil {

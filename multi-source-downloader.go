@@ -83,20 +83,34 @@ authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().BoolVarP(&verbose,		"verbose", 		 "v", false, 		`(Optional) Output verbose logging (INFO and Debug), verbose not passed
 only output INFO logging.`)
 
-	viper.BindPFlag("max-connections", 	rootCmd.PersistentFlags().Lookup("max-connections"))
-	viper.BindPFlag("sha-sums", 		rootCmd.PersistentFlags().Lookup("sha-sums"))
-	viper.BindPFlag("url", 				rootCmd.PersistentFlags().Lookup("url"))
-	viper.BindPFlag("num-parts", 		rootCmd.PersistentFlags().Lookup("num-parts"))
-	viper.BindPFlag("parts-dir", 		rootCmd.PersistentFlags().Lookup("parts-dir"))
-	viper.BindPFlag("prefix-parts", 	rootCmd.PersistentFlags().Lookup("prefix-parts"))
-	viper.BindPFlag("proxy", 			rootCmd.PersistentFlags().Lookup("proxy"))
-	viper.BindPFlag("keep-parts", 		rootCmd.PersistentFlags().Lookup("keep-parts"))
-	viper.BindPFlag("decrypt-manifest", rootCmd.PersistentFlags().Lookup("decrypt-manifest"))
-	viper.BindPFlag("manifest-file", 	rootCmd.PersistentFlags().Lookup("manifest-file"))
-    viper.BindPFlag("download-only", 	rootCmd.PersistentFlags().Lookup("download-only"))
-    viper.BindPFlag("assemble-only", 	rootCmd.PersistentFlags().Lookup("assemble-only"))
-    viper.BindPFlag("output", 			rootCmd.PersistentFlags().Lookup("output"))
-	viper.BindPFlag("verbose", 			rootCmd.PersistentFlags().Lookup("verbose"))
+	err := viper.BindPFlag("max-connections", 	rootCmd.PersistentFlags().Lookup("max-connections"))
+	if err != nil { return }
+	err = viper.BindPFlag("sha-sums", 			rootCmd.PersistentFlags().Lookup("sha-sums"))
+	if err != nil { return }
+	err = viper.BindPFlag("url", 				rootCmd.PersistentFlags().Lookup("url"))
+	if err != nil { return }
+	err = viper.BindPFlag("num-parts", 			rootCmd.PersistentFlags().Lookup("num-parts"))
+	if err != nil { return }
+	err = viper.BindPFlag("parts-dir", 			rootCmd.PersistentFlags().Lookup("parts-dir"))
+	if err != nil { return }
+	err = viper.BindPFlag("prefix-parts", 		rootCmd.PersistentFlags().Lookup("prefix-parts"))
+	if err != nil { return }
+	err = viper.BindPFlag("proxy", 				rootCmd.PersistentFlags().Lookup("proxy"))
+	if err != nil { return }
+	err = viper.BindPFlag("keep-parts", 		rootCmd.PersistentFlags().Lookup("keep-parts"))
+	if err != nil { return }
+	err = viper.BindPFlag("decrypt-manifest", 	rootCmd.PersistentFlags().Lookup("decrypt-manifest"))
+	if err != nil { return }
+	err = viper.BindPFlag("manifest-file", 		rootCmd.PersistentFlags().Lookup("manifest-file"))
+	if err != nil { return }
+    err = viper.BindPFlag("download-only", 		rootCmd.PersistentFlags().Lookup("download-only"))
+	if err != nil { return }
+    err = viper.BindPFlag("assemble-only", 		rootCmd.PersistentFlags().Lookup("assemble-only"))
+	if err != nil { return }
+    err = viper.BindPFlag("output", 			rootCmd.PersistentFlags().Lookup("output"))
+	if err != nil { return }
+	err = viper.BindPFlag("verbose", 			rootCmd.PersistentFlags().Lookup("verbose"))
+	if err != nil { return }
 }
 
 func initConfig() {
@@ -164,9 +178,15 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 
 	// Clean memory after decoding content
 	decryptedContent = nil
+	for i := range decryptedContent {
+		decryptedContent[i] = 0
+	}
 
 	// Assemble the file from the downloaded parts
-	a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{})
+	err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{})
+	if err != nil {
+		log.Fatalf("Failed to assemble parts:%v\n", err)
+	}
 
 	if !keepParts { // If keepParts is false, remove the part file
 		// If partsDir was provided
@@ -245,7 +265,10 @@ func execute(cmd *cobra.Command, args []string) {
 			}
 			defer outFile.Close() // Close the file after the function returns
 
-			a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{}) // make sure to modify this method to receive and handle your manifest file
+			err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{}) // make sure to modify this method to receive and handle your manifest file
+			if err != nil {
+				log.Fatalf("Failed to assemble parts:%v\n", err)
+			}
 
 			hash := manifest.FileHash
 			ok := hash != ""
@@ -257,7 +280,10 @@ func execute(cmd *cobra.Command, args []string) {
 			log.Fatalw("Error: manifest file not found")
 		}
 	} else if downloadOnly {
-		d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
+		_, _, _, _, _, _, _, _, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
+		if err != nil {
+			log.Fatalf("Failed to download the part files:%v\n", err)
+		}
 	} else {
 		if urlFile == "" {
 			log.Fatalw("Error: the --url flag is required")
