@@ -129,3 +129,42 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName stri
 	}
 	return nil
 }
+
+func (m *Manifest) ExtractManifestFilePathFileName(outputFile string, manifestContent []byte) (DownloadManifest, string, string, error) {
+	f := fileutils.NewFileutils(m.PartsDir, m.PrefixParts, m.Log)
+	// Validate the path of output file
+	message, err := f.ValidatePath(outputFile)
+	if err != nil {
+		f.Log.Fatalw("Found an error validating path string.", err.Error())
+	} else {
+		f.Log.Debugw(message)
+	}
+
+	// Extract the path and filename from the output file
+	filePath, fileName, err := f.ExtractPathAndFilename(outputFile)
+	if err != nil {
+		f.Log.Fatalf("Could not parse the string:%v", err.Error())
+	}
+
+	// Validate the path of the output file
+	if filePath != "" {
+		err = f.ValidateCreatePath(filePath)
+		if err != nil {
+			f.Log.Fatalw("Found an error validating path string: %s", err.Error())
+		}
+	}
+
+	// Decode the JSON content into a map
+	var manifest DownloadManifest
+	err = json.Unmarshal(manifestContent, &manifest)
+	if err != nil {
+		f.Log.Fatalw("Decoding manifest content: ", "error", err.Error())
+	}
+
+	// Get the output filename from the manifest, if return filename is empty
+	if fileName == "" {
+		fileName = manifest.Filename
+	}
+
+	return manifest, filePath, fileName, err
+}

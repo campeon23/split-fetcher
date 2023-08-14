@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -91,8 +92,14 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 	}
 	defer encryptedFile.Close()
 
-	encryptedFile.Write(iv)
-	encryptedFile.Write(ciphertext)
+	_, err = encryptedFile.Write(iv)
+	if err != nil {
+		return fmt.Errorf("failed to create aes block size: %v", err)
+	}
+	_, err = encryptedFile.Write(ciphertext)
+	if err != nil {
+		return fmt.Errorf("failed to create ciphertext: %v", err)
+	}
 
 	e.Log.Debugw("File encrypted successfully and saved as:", 
 		"encryptedFilename", encryptedFilename,

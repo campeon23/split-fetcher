@@ -167,12 +167,12 @@ func (f *Fileutils) ExtractPathAndFilename(path string) (string, string, error) 
 func (f *Fileutils) ValidatePath(path string) (string, error) {
 	// Check for path escaping out of home directory
 	if strings.Contains(path, "../") {
-		return "", errors.New("Invalid path - escaping directory not allowed")
+		return "", errors.New("invalid path - escaping directory not allowed")
 	}
 
 	// Check for root directory
 	if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "./") && !strings.HasPrefix(path, "~/") {
-		return "", errors.New("Invalid path - outside home directory not allowed")
+		return "", errors.New("invalid path - outside home directory not allowed")
 	}
 
 	// Regular expression for valid directory and path names
@@ -182,7 +182,7 @@ func (f *Fileutils) ValidatePath(path string) (string, error) {
 	// Split path and validate each part
 	parts := strings.Split(path, "/")
 	f.Log.Debugw(
-		"Validating path", 
+		"Validating dirs and filenames in path", 
 		"parts", parts,
 	)
 	for _, part := range parts {
@@ -190,7 +190,7 @@ func (f *Fileutils) ValidatePath(path string) (string, error) {
 			continue
 		}
 		if !dirRegex.MatchString(part) && !filenameRegex.MatchString(part) {
-			return "", errors.New("Invalid character in path or filename")
+			return "", errors.New("invalid character in path or filename")
 		}
 	}
 
@@ -198,10 +198,22 @@ func (f *Fileutils) ValidatePath(path string) (string, error) {
 	if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "~/") {
 		directory, filename, err := f.ExtractPathAndFilename(path)
 		if err != nil {
-			return "", errors.New("Invalid path format")
+			return "", errors.New("invalid path format")
 		}
 		return fmt.Sprintf("Valid path. Directory: %s. Filename: %s", directory, filename), nil
 	}
 
 	return "", nil
+}
+
+func (f *Fileutils) ProcessPartsDir() error {
+	_, err := f.ValidatePath(f.PartsDir)
+	if err != nil {
+		return fmt.Errorf("invalid parts directory: %w", err)
+	}
+	err = f.ValidateCreatePath(f.PartsDir)
+	if err != nil {
+		return fmt.Errorf("failed to create parts directory: %w", err)
+	}
+	return nil
 }

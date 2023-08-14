@@ -2,19 +2,29 @@
 # Make sure to check the documentation at https://goreleaser.com
 before:
   hooks:
-    - ls -al
+    # You may remove this if you don't use go modules.
     - go mod tidy
-    - go mod download
+    # you may remove this if you don't need go generate
     - go generate ./...
-    - golangci-lint run ./...
 builds:
-    - env:
-      - GO111MODULE=on
+  - env:
       - CGO_ENABLED=0
-      goos:
+    goos:
       - linux
       - windows
       - darwin
+#Configuration for building packages for rpm and deb package managers
+nfpms:
+  - package_name: shagen
+    homepage: https://github.com/rexfordnyrk/shagen/
+    maintainer: Rexford A. Nyarko <rexfordnyrk@gmail.com>
+    description: |-
+            Shagen installer package. CLI application to generate SHA256 hashes of texts.
+    formats:
+      - rpm
+      - deb
+sboms:
+  - artifacts: archive
 
 archives:
   - format: tar.gz
@@ -43,5 +53,5 @@ changelog:
 
 # The lines beneath this are called `modelines`. See `:help modeline`
 # Feel free to remove those if you don't want/use them.
-# yaml-language-server: $schema=https://goreleaser.com/static/schema-pro.json
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj

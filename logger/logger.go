@@ -16,8 +16,20 @@ func (l *Logger) Infow(msg string, keysAndValues ...interface{}) {
 	l.sugar.Infow(msg, keysAndValues...)
 }
 
+func (l *Logger) Errorf(template string, args ...interface{}) {
+	l.sugar.Errorf(template, args...)
+}
+
+func (l *Logger) Printf(template string, args ...interface{}) {
+	l.sugar.Infof(template, args...)
+}
+
 func (l *Logger) Debugw(msg string, keysAndValues ...interface{}) {
 	l.sugar.Debugw(msg, keysAndValues...)
+}
+
+func (l *Logger) Debugf(template string, args ...interface{}) {
+	l.sugar.Debugf(template, args...)
 }
 
 func (l *Logger) Warnw(msg string, keysAndValues ...interface{}) {
