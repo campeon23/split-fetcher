@@ -40,11 +40,11 @@ func NewPprofUtils(log *logger.Logger) *PprofUtils {
 	}
 }
 
-func (s *PprofUtils) GetErrorChannel() chan error {
-	return s.errCh
+func (p *PprofUtils) GetErrorChannel() chan error {
+	return p.errCh
 }
 
-func (s *PprofUtils) StartServerWithShutdown(addr, certPath, keyPath string) chan error {
+func (p *PprofUtils) StartServerWithShutdown(addr, certPath, keyPath string) chan error {
 	srv := &http.Server{
 		Addr: addr,
 	}
@@ -68,60 +68,60 @@ func (s *PprofUtils) StartServerWithShutdown(addr, certPath, keyPath string) cha
 	// Start server
 	go func() {
 		if err := srv.ListenAndServeTLS(certPath, keyPath); err != http.ErrServerClosed {
-			s.errCh <- fmt.Errorf("server error: %w" +  err.Error())
+			p.errCh <- fmt.Errorf("server error: %w" +  err.Error())
 		}
 	}()
 
 	// Block until signal or keypress is received
 	select {
 	case <-signalChan:
-		s.Log.Infow("Received an interrupt, stopping services...")
+		p.Log.Infow("Received an interrupt, stopping services...")
 	case <-keyPressChan:
-		s.Log.Infow("Received 's' keypress, stopping services...")
+		p.Log.Infow("Received 's' keypress, stopping services...")
 	}
 
 	// Gracefully shutdown the server
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(timeoutCtx); err != nil {
-		s.errCh <- fmt.Errorf("server shutdown error: %w" + err.Error())
+		p.errCh <- fmt.Errorf("server shutdown error: %w" + err.Error())
 	} else {
-		s.Log.Infow("server gracefully stopped.")
+		p.Log.Infow("server gracefully stopped.")
 	}
 
 	// Wait for pprof server to shutdown gracefully if it was started
 	wg.Wait()
 
 	select {
-	case err := <-s.errCh:
+	case err := <-p.errCh:
 		if err != nil {
-			return s.errCh // Return the channel with the error
+			return p.errCh // Return the channel with the error
 		}
-		close(s.errCh)
+		close(p.errCh)
 		return nil
 	default:
-		close(s.errCh)
+		close(p.errCh)
 		return nil
 	}
 }
 
-func (s *PprofUtils) StartPprof() chan error {
+func (p *PprofUtils) StartPprof() chan error {
 	wg.Add(1)
 
 	certPath := "./certs/pprof_cert.pem"
 	keyPath := "./certs/pprof_key.pem"
 
-	s.Log.Infow("Starting pprof server on :6060")
+	p.Log.Infow("Starting pprof server on :6060")
 
 	go func() {
 		defer wg.Done()
 		
 		// Start the HTTP server with graceful shutdown using TLS
-		serverErrCh := s.StartServerWithShutdown(":6060", certPath, keyPath)
+		serverErrCh := p.StartServerWithShutdown(":6060", certPath, keyPath)
 		// If server encounters error, pass it to our errCh
 		select {
 		case err := <-serverErrCh:
-			s.errCh <- err
+			p.errCh <- err
 		default:
 		}
 	}()
@@ -129,7 +129,7 @@ func (s *PprofUtils) StartPprof() chan error {
 	return nil
 }
 
-func (s *PprofUtils) DumpDebugPProf() error {
+func (p *PprofUtils) DumpDebugPProf() error {
 	// Retrieve the values of your flags
 	urlFile := viper.GetString("url")
 	outputFile := viper.GetString("output")
@@ -137,8 +137,8 @@ func (s *PprofUtils) DumpDebugPProf() error {
 	prefixParts := viper.GetString("prefix-parts")
 
 	c := colly.NewCollector()
-	f := fileutils.NewFileutils(partsDir, prefixParts, s.Log)
-	u := utils.NewUtils("", s.Log)
+	f := fileutils.NewFileutils(partsDir, prefixParts, p.Log)
+	u := utils.NewUtils("", p.Log)
 	// This will bypass SSL certificate verification (useful for local development)
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
@@ -149,7 +149,7 @@ func (s *PprofUtils) DumpDebugPProf() error {
 	// Check if debug directory exists; if not, create it
 	if _, err := os.Stat("debug"); os.IsNotExist(err) {
 		if err := os.Mkdir("debug", 0755); err != nil {
-			s.Log.Printf("Failed to create directory: %v", err)
+			p.Log.Printf("Failed to create directory: %v", err)
 		}
 	}
 
@@ -176,7 +176,7 @@ func (s *PprofUtils) DumpDebugPProf() error {
 		// Send GET request to the link with query parameter
 		resp, err := http.Get(baseURL + link)
 		if err != nil {
-			s.Log.Errorf("failed querying %s: %v", baseURL, err)
+			p.Log.Errorf("failed querying %s: %v", baseURL, err)
 			return
 		}
 		defer resp.Body.Close()
@@ -188,7 +188,7 @@ func (s *PprofUtils) DumpDebugPProf() error {
 		if resp.Header.Get("Content-Encoding") == "gzip" {
 			gzipReader, err := gzip.NewReader(resp.Body)
 			if err != nil {
-				s.Log.Errorf("error creating gzip reader:", err)
+				p.Log.Errorf("error creating gzip reader:", err)
 				return
 			}
 			defer gzipReader.Close()
@@ -198,20 +198,20 @@ func (s *PprofUtils) DumpDebugPProf() error {
 		// Read response body
 		data, err := io.ReadAll(reader)
 		if err != nil {
-			s.Log.Errorf("error reading response body:", err)
+			p.Log.Errorf("error reading response body:", err)
 			return
 		}
 
 		// Check if the content type is binary
 		if contentType == "application/octet-stream" {
-			s.Log.Debugf("Warning: Saving binary profile data for %s", link)
+			p.Log.Debugf("Warning: Saving binary profile data for %s", link)
 		} else if contentType != "text/plain" {
-			s.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
+			p.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
 		}
 
 		resource, dumpType, value, err := u.ParseLink(link)
 		if err != nil {
-			s.Log.Errorf("Error:", err)
+			p.Log.Errorf("Error:", err)
 			return
 		}
 
@@ -220,11 +220,11 @@ func (s *PprofUtils) DumpDebugPProf() error {
 		// Write to file in the debug directory
 		err = os.WriteFile("debug/"+dumpName, data, 0644)
 		if err != nil {
-			s.Log.Errorf("Error writing to file: %v", err)
+			p.Log.Errorf("Error writing to file: %v", err)
 			return
 		}
 
-		s.Log.Debugw(
+		p.Log.Debugw(
 			"Wrote file to debug directory",
 			"file", dumpName,
 			"baseURL", baseURL,
