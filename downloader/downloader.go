@@ -48,10 +48,12 @@ func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, p
 	}
 }
 
-func (d *Downloader) initUIAndDownloadParameters() (int, atomic.Value) {
+func (d *Downloader) InitUIAndDownloadParameters() (int, atomic.Value, string) {
 	var speed atomic.Value
 	speed.Store("")
-	return 0, speed
+	progressbarName := "output part "
+	maxProgressbarLen := len(progressbarName + fmt.Sprint(d.NumParts))
+	return maxProgressbarLen, speed, progressbarName
 }
 
 // A simple function to check if a string starts with "http://"
@@ -109,24 +111,20 @@ func (d *Downloader) InitDownloadManifest(fileName, hash, etag, hashType string,
 	}
 }
 
-func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, sem chan struct{}, maxProgressFileNameLen int, progressBars []*uiprogress.Bar, partFilesHashes []string, speed atomic.Value, downloadManifest *manifest.DownloadManifest, wg *sync.WaitGroup) {
+func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, sem chan struct{}, maxProgressbarNameLen int, progressbarName string, progressBars []*uiprogress.Bar, partFilesHashes []string, speed atomic.Value, downloadManifest *manifest.DownloadManifest, wg *sync.WaitGroup, errCh chan error) {
+	f := fileutils.NewFileutils(d.PartsDir, d.PrefixParts, d.Log)
+	u := utils.NewUtils(d.PartsDir, d.Log)
 	go func(i int) {
 		if d.MaxConcurrentConnections != 0 {
 			sem <- struct{}{} // acquire a token
 			defer func() { <-sem }() // release the token
 		}
-
 		defer wg.Done()
 
-		timestamp := time.Now().UnixNano() // UNIX timestamp with nanosecond precision
+		timestamp := u.GenerateTimestamp() // UNIX timestamp with nanosecond precision
 
-		progressFileName := fmt.Sprintf("output part %d", i+1)
-		outputPartFileName := fmt.Sprintf("%s%s-%s-%d.part", d.PartsDir, d.PrefixParts, uuid.New(), i+1)
-
-		d.Log.Debugw("Debugging part files paths",
-			"outputPartFileName", outputPartFileName,
-			"partsDir", d.PartsDir,
-		) // Add debug output
+		progressbarName := fmt.Sprintf(progressbarName + "%d", i+1)
+		outputPartFileName := fmt.Sprintf("%s"+ string(os.PathSeparator) +"%s-%s-%d.part", d.PartsDir, d.PrefixParts, uuid.New(), i+1)
 
 		outputPartFile, err := os.Create(outputPartFileName)
 		if err != nil {
@@ -134,16 +132,12 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 		}
 		defer outputPartFile.Close()
 
-		if len(progressFileName) > maxProgressFileNameLen {
-			maxProgressFileNameLen = len(progressFileName)
-		}
-
 		// Create a progress bar
 		bar := uiprogress.AddBar(rangeSize).PrependElapsed()
 		
 		// Set the progress bar details
 		bar.PrependFunc(func(b *uiprogress.Bar) string {
-			return fmt.Sprintf("%-*s | %s | %s", maxProgressFileNameLen, progressFileName, utils.FormatFileSize(int64(b.Current())), utils.FormatFileSize(int64(rangeSize)))
+			return fmt.Sprintf("%-*s | %s | %s", maxProgressbarNameLen, progressbarName, utils.FormatFileSize(int64(b.Current())), utils.FormatFileSize(int64(rangeSize)))
 		})
 		bar.AppendFunc(func(b *uiprogress.Bar) string {
 			return fmt.Sprintf("%s %s", utils.FormatPercentage(int64(b.Current()), int64(rangeSize)), speed.Load().(string))
@@ -167,12 +161,6 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 		}
 
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", startLength, endLength))
-
-		d.Log.Debugw(
-			"Downloading range Start to End", 
-			"Start", startLength,
-			"End",	 endLength,
-		) // Add debug output
 
 		resp, err := client.Do(req) // Use the custom client
 		if err != nil {
@@ -214,10 +202,9 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 				// add bytes downloaded to total
 				totalBytesDownloaded += int64(bytesRead)
 
-				// update progress bar
-				err = bar.Set(int(totalBytesDownloaded)) // update the progress bar to the current total bytes downloaded
-				if err != nil {
-					return 
+				// Update the progress bar to the current total bytes downloaded
+				if err := bar.Set(int(totalBytesDownloaded)); err != nil {
+					d.Log.Infow("Warning: failed updating the progress bar: %v", err)
 				}
 			}
 
@@ -226,7 +213,8 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 				break
 			}
 			if err != nil {
-				d.Log.Fatalw("Error: Fatal", "error", err)
+				errCh <- fmt.Errorf("failed, io.EOF ecounted: %v", err)
+				return
 			}
 			startTime = time.Now() // reset start time after processing the chunk
 			currentSpeed := utils.FormatSpeed(totalBytesDownloaded, totalElapsedMilliseconds)
@@ -237,14 +225,16 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 		outputPartFile.Close()
 		outputPartFile, err = os.Open(outputPartFileName)
 		if err != nil {
-			d.Log.Fatalw("Error: Failed to open part file", "error", err)
+			errCh <- fmt.Errorf("failed to open part file %v", err)
+			return
 		}
 		defer outputPartFile.Close()
 
 		// Calculate the hash from the temporary part file
 		h := sha256.New()
 		if _, err := io.Copy(h, outputPartFile); err != nil {
-			d.Log.Fatalw("Error: Failed to calculate the hash from temporary file: ", "error", err)
+			errCh <- fmt.Errorf("failed to calculate the hash from temporary file:  %v", err)
+			return
 		}
 		sha256Hash := h.Sum(nil)
 		sha256HashString := hex.EncodeToString(sha256Hash[:])
@@ -253,9 +243,13 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 		// Close the file before renaming
 		outputPartFile.Close()
 
-		partFileName := fmt.Sprintf("%s%s-%s-%d.part", d.PartsDir, d.PrefixParts, sha256HashString, timestamp)
-		if err := os.Rename(outputPartFileName, partFileName); err != nil {
-			d.Log.Fatalw("Error: Failed to rename the part file", "error", err)
+		partFileName := fmt.Sprintf("%s" + string(os.PathSeparator) + "%s-%s-%d.part", d.PartsDir, d.PrefixParts, sha256HashString, timestamp)
+
+		if f.PathExists(outputPartFileName) && !f.PathExists(partFileName) {
+			if err := os.Rename(outputPartFileName, partFileName); err != nil {
+				errCh <- fmt.Errorf("failed to rename the part file:  %v", err)
+				return
+			}
 		}
 
 		// Reopen the file under the new name
@@ -269,10 +263,6 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 			d.Log.Fatalw("Error: expected to read more bytes", "error", err)
 		}
 
-		d.Log.Infow(
-			"Writing to manifest file",
-		)
-
 		// Add downloaded part info to the download manifest
 		downloadManifest.DownloadedParts = append(downloadManifest.DownloadedParts, manifest.DownloadedPart{
 			PartNumber: i + 1,
@@ -280,15 +270,6 @@ func (d *Downloader) DownloadPart(client *http.Client, i, rangeSize, size int, s
 			Timestamp:  timestamp,
 			PartFile:   outputPartFile.Name(),
 		})
-
-		d.Log.Debugw(
-			"Downloaded part",
-			"part file",			i+1,
-			"sha256 hash string", 	sha256HashString, 
-			"timestamp", 			timestamp,
-			"filename", 			outputPartFile.Name(),
-		) // Print the part being downloaded. Debug output
-
 	}(i)
 }
 
@@ -309,7 +290,10 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 	
 	d.Log.Infow("Starting download")
 
+	// Initialize wait group and error channel
 	var wg sync.WaitGroup
+	errCh := make(chan error, 1) // Buffered channel to prevent blocking
+
 	wg.Add(d.NumParts)
 
 	rangeSize := size / d.NumParts
@@ -322,7 +306,7 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 
 	parsedURL, err := url.Parse(d.URLFile)
 	if err != nil {
-		d.Log.Fatalw("Error: Invalid URL", "error", err)
+		return manifest.DownloadManifest{}, nil, 0, "", "", 0, "", fmt.Errorf("error: Invalid URL: %w", err)
 	}
 
 	// Get the file name from the URL
@@ -337,11 +321,10 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 	d.Log.Debugw("Inititalizing download manifest", "downloadManifest", downloadManifest) // Add debug output
 
 	// Initialize the UI and download parameters
-	maxProgressFileNameLen, speed := d.initUIAndDownloadParameters()
+	maxProgressbarNameLen, speed, progressbarName := d.InitUIAndDownloadParameters()
 
 	// Create a new UI progress bar and start it
 	uiprogress.Start()
-	// defer uiprogress.Stop()
 
 	progressBars := make([]*uiprogress.Bar, d.NumParts)
 	partFilesHashes := make([]string, d.NumParts)
@@ -352,11 +335,29 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 		d.Log.Debugw("Max concurrent connections not set. Downloading all parts at once.")
 	}
 
+	var firstError error
+
 	for i := 0; i < d.NumParts; i++ {
-		go d.DownloadPart(client, i, rangeSize, size, sem, maxProgressFileNameLen, progressBars, partFilesHashes, speed, &downloadManifest, &wg)
+		go d.DownloadPart(client, i, rangeSize, size, sem, maxProgressbarNameLen, progressbarName, progressBars, partFilesHashes, speed, &downloadManifest, &wg, errCh)
 	}
 
+	go func() {
+		for err := range errCh {
+			if err != nil && firstError == nil { // capture only the first error
+				firstError = fmt.Errorf("error captured in errChannel: %w", err)
+			}
+		}
+		close(errCh)
+	}()
+
 	wg.Wait()
+
+	// No need to read from errCh directly, just check the value of firstError
+	if firstError != nil {
+		return manifest.DownloadManifest{}, nil, 0, "", "", 0, "", fmt.Errorf("received error from goroutine: %w", firstError)
+	} else {
+		fmt.Println("No errors received from goroutine")
+	}
 
 	// Stop the progress bar after all downloads are complete
 	uiprogress.Stop()

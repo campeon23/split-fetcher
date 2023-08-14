@@ -134,7 +134,9 @@ func (h *Hasher) ValidateFileIntegrity(fileName, hashType, etag string, hash str
 		h.Log.Infow("Unknown Etag format, cannot check hash")
 	case ok:
 		if hash == fileHash.Sha256 || hash == fileHash.Sha1 || hash == fileHash.Md5 {
-			h.Log.Infow("File hash matches hash from SHA sums file")
+			h.Log.Infow("File hash matches hash from SHA sums.",
+			"file: ", fileName,
+		)
 		} else {
 			h.Log.Infow("File hash does not match hash from SHA sums file")
 		}
@@ -152,8 +154,6 @@ func (h *Hasher) HashesFromFiles(partsDir, prefixParts, hashType string) ([]stri
 		}
 
 		if !info.IsDir() && strings.HasPrefix(info.Name(), prefixParts) {
-			h.Log.Debugw("Part file found", "file", path)
-
 			// Open the temporary part file
 			outputPartFile, err := os.Open(path)
 			if err != nil {

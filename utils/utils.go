@@ -3,11 +3,15 @@ package utils
 import (
 	"fmt"
 	"io"
+	"net/url"
+	"strings"
 	"sync"
+	"time"
 	"unicode"
 
-	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/gosuri/uiprogress"
+
+	"github.com/campeon23/multi-source-downloader/logger"
 )
 
 // Define a buffer pool globally to reuse buffers
@@ -36,9 +40,6 @@ type ProgressWriter struct {
 }
 
 func (pw *ProgressWriter) Write(p []byte) (int, error) {
-	// n := len(p)
-	// pw.Bar.Set(pw.Bar.Current() + n)
-	// return pw.W.Write(p)
 	n, err := pw.W.Write(p)
 	pw.Bar.Incr()
 	return n, err
@@ -88,4 +89,29 @@ func (u *Utils) TrimLeadingSymbols(s string) string {
 		}
 	}
 	return s
+}
+
+func (u *Utils) GenerateTimestamp() int64 {
+	return time.Now().UnixNano()
+}
+
+// ParseLink parses the given link and returns the resource name, query key, and query value.
+func (u *Utils) ParseLink(link string) (string, string, string, error) {
+	urlLink, err := url.Parse(link)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	// Splitting the path to get the resource name
+	pathComponents := strings.Split(urlLink.Path, "/")
+	if len(pathComponents) < 1 {
+		return "", "", "", fmt.Errorf("invalid path in the URL")
+	}
+	resource := pathComponents[len(pathComponents)-1]
+
+	// Parsing the query values
+	values := urlLink.Query()
+	debugValue := values.Get("debug")
+
+	return resource, "debug", debugValue, nil
 }

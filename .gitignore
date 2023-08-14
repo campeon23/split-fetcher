@@ -18,6 +18,9 @@ multi-source-downloader
 # Build Directories
 Final
 
+# Certs
+certs
+
 # MacOs files
 .DS_Store
 
