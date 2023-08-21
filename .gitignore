@@ -38,6 +38,8 @@ certs
 
 # Bakup files
 *.bak*
+bak.*
+*.bak
 
 # Compressed files
 *.tar.*
