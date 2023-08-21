@@ -19,10 +19,14 @@ type Assembler struct {
 	PartsDir 	string
 	PrefixParts string
 	KeepParts 	bool
-	Log			*logger.Logger
+	Log			logger.LoggerInterface
 }
 
-func NewAssembler(numParts int, partsDir string, keepParts bool, prefixParts string, log *logger.Logger) *Assembler {
+func (a *Assembler) SetLogger(log logger.LoggerInterface) {
+    a.Log = log
+}
+
+func NewAssembler(numParts int, partsDir string, keepParts bool, prefixParts string, log logger.LoggerInterface) *Assembler {
 	return &Assembler{
 		NumParts: numParts,
 		PartsDir: partsDir,
@@ -126,40 +130,6 @@ func (a *Assembler) AssembleFileFromParts(manifest manifest.DownloadManifest, ou
 func (a *Assembler) PrepareAssemblyEnviroment(outputFile string, manifestContent []byte) (manifest.DownloadManifest, *os.File, string, error) {
 	f := fileutils.NewFileutils(a.PartsDir, a.PrefixParts, a.Log)
 	m := manifest.NewManifest(a.PartsDir, a.PrefixParts, a.Log)
-
-	// Validate the path of output file
-	// message, err := f.ValidatePath(outputFile)
-	// if err != nil {
-	// 	f.Log.Fatalw("Found an error validating path string.", err.Error())
-	// } else {
-	// 	f.Log.Debugw(message)
-	// }
-
-	// // Extract the path and filename from the output file
-	// filePath, fileName, err := f.ExtractPathAndFilename(outputFile)
-	// if err != nil {
-	// 	f.Log.Fatalf("Could not parse the string:%v", err.Error())
-	// }
-
-	// // Validate the path of the output file
-	// if filePath != "" {
-	// 	err = f.ValidateCreatePath(filePath)
-	// 	if err != nil {
-	// 		f.Log.Fatalw("Found an error validating path string: %s", err.Error())
-	// 	}
-	// }
-
-	// // Decode the JSON content into a map
-	// var manifest manifest.DownloadManifest
-	// err = json.Unmarshal(manifestContent, &manifest)
-	// if err != nil {
-	// 	f.Log.Fatalw("Decoding manifest content: ", "error", err.Error())
-	// }
-
-	// // Get the output filename from the manifest, if return filename is empty
-	// if fileName == "" {
-	// 	fileName = manifest.Filename
-	// }
 
 	manifest, filePath, fileName, err := m.ExtractManifestFilePathFileName(outputFile, manifestContent)
 	if err != nil {

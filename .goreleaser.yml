@@ -3,10 +3,15 @@
 before:
   hooks:
     - ls -al
+    - go clean -cache
+    - go clean -modcache
+    - go clean -testcache
     - go mod tidy
     - go mod download
     - go generate ./...
     - golangci-lint run ./...
+    - go test ./...
+    - go test -cover ./...
 builds:
     - env:
       - GO111MODULE=on
@@ -15,7 +20,18 @@ builds:
       - linux
       - windows
       - darwin
-
+#Configuration for building packages for rpm and deb package managers
+nfpms:
+  - package_name: shagen
+    homepage: https://github.com/rexfordnyrk/shagen/
+    maintainer: Rexford A. Nyarko <rexfordnyrk@gmail.com>
+    description: |-
+            Shagen installer package. CLI application to generate SHA256 hashes of texts.
+    formats:
+      - rpm
+      - deb
+sboms:
+  - artifacts: archive
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of uname.

@@ -18,7 +18,10 @@ import (
 )
 
 type Hasher struct {
-	Log	*logger.Logger
+	PartsDir	string
+	PrefixParts	string
+	// Log			*logger.Logger
+	Log 		logger.LoggerInterface
 }
 
 type fileHashes struct {
@@ -27,10 +30,16 @@ type fileHashes struct {
 	Sha256 string
 }
 
-func NewHasher(log *logger.Logger) *Hasher {
+func NewHasher(partsDir string, prefixParts string, log logger.LoggerInterface) *Hasher {
 	return &Hasher{
+		PartsDir: partsDir,
+		PrefixParts: prefixParts,
 		Log: log,
 	}
+}
+
+func (h *Hasher) SetLogger(log logger.LoggerInterface) {
+    h.Log = log
 }
 
 func (h *Hasher) DownloadAndParseHashFile(shaSumsURL string) (map[string]string, error) {

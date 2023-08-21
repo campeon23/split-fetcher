@@ -20,15 +20,19 @@ import (
 type Encryption struct {
 	PartsDir		string
 	PrefixParts		string
-	Log			*logger.Logger
+	Log				logger.LoggerInterface
 }
 
-func NewEncryption(partsDir string, prefixParts string,log *logger.Logger) *Encryption {
+func NewEncryption(partsDir string, prefixParts string,log logger.LoggerInterface) *Encryption {
 	return &Encryption{
 		PartsDir: partsDir,
 		PrefixParts: prefixParts,
 		Log: log,
 	}
+}
+
+func (e *Encryption) SetLogger(log logger.LoggerInterface) {
+    e.Log = log
 }
 
 func (e *Encryption) CreateEncryptionKey(strings []string) ([]byte, error) {

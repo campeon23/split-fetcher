@@ -24,6 +24,9 @@ certs
 # MacOs files
 .DS_Store
 
+# VSCode files
+.vscode
+
 # Test binary, built with `go test -c`
 *.test
 

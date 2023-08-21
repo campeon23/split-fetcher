@@ -12,6 +12,12 @@ import (
 	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/hasher"
 	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/multi-source-downloader/pprofutils"
+	"github.com/campeon23/multi-source-downloader/utils"
+)
+
+const ( 
+	port = ":6060"
 )
 
 var (
@@ -30,7 +36,7 @@ var (
     outputFile 					string
 	verbose 					bool
 	log 						*logger.Logger // Declared at package level to use the logger across different functions in this package
-	// enablePprof 				bool // Uncomment if debuging with pprof
+	enablePprof 				bool // Uncomment if debuging with pprof
 
 )
 
@@ -44,16 +50,16 @@ It then assembles the final file, with support for either Etag validation or Has
 validation, to ensure file integrity. And more things...`,
 	Run:   func(cmd *cobra.Command, args []string) {
 		// Retrieve the values of your flags
-		manifestFile = viper.GetString("manifest-file")
+		manifestFile 	= viper.GetString("manifest-file")
 		decryptManifest = viper.GetBool("decrypt-manifest")
-        downloadOnly = viper.GetBool("download-only")
-        assembleOnly = viper.GetBool("assemble-only")
-        outputFile 	 = viper.GetString("output")
-		partsDir 	 = viper.GetString("parts-dir")
-		prefixParts	 = viper.GetString("prefix-parts")
-		proxy 		 = viper.GetString("proxy")
-		keepParts 	 = viper.GetBool("keep-parts")
-		// enablePprof  = viper.GetBool("enable-pprof") // Uncomment if debuging with pprof
+        downloadOnly 	= viper.GetBool("download-only")
+        assembleOnly 	= viper.GetBool("assemble-only")
+        outputFile 	 	= viper.GetString("output")
+		partsDir 	 	= viper.GetString("parts-dir")
+		prefixParts	 	= viper.GetString("prefix-parts")
+		proxy 		 	= viper.GetString("proxy")
+		keepParts 	 	= viper.GetBool("keep-parts")
+		enablePprof  	= viper.GetBool("enable-pprof") // Uncomment if debuging with pprof
 
 		// Execute the main function
 		execute(cmd, args)
@@ -81,7 +87,7 @@ authenticity of the downloaded file.`)
     rootCmd.PersistentFlags().StringVarP(&outputFile, 	"output",		 	 "o", "", 		"(Optional) Name and location of the final output file")
 	rootCmd.PersistentFlags().BoolVarP(&verbose,		"verbose", 		 	 "v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
 only output INFO logging.`)
-	// rootCmd.PersistentFlags().BoolVarP(&enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
+	rootCmd.PersistentFlags().BoolVarP(&enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
 
 	err := viper.BindPFlag("max-connections", 	rootCmd.PersistentFlags().Lookup("max-connections"))
 	if err != nil { return }
@@ -111,8 +117,8 @@ only output INFO logging.`)
 	if err != nil { return }
 	err = viper.BindPFlag("verbose", 			rootCmd.PersistentFlags().Lookup("verbose"))
 	if err != nil { return }
-	// err = viper.BindPFlag("enable-pprof", 		rootCmd.PersistentFlags().Lookup("enable-pprof")) // Uncomment if debuging with pprof
-	// if err != nil { return }
+	err = viper.BindPFlag("enable-pprof", 		rootCmd.PersistentFlags().Lookup("enable-pprof")) // Uncomment if debuging with pprof
+	if err != nil { return }
 }
 
 func initConfig() {
@@ -124,11 +130,13 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(partsDir, prefixParts, log)
-	h := hasher.NewHasher(log)
+	h := hasher.NewHasher(partsDir, prefixParts, log)
+	u := utils.NewUtils(partsDir, log)
 
 	appRoot, _ := f.EnsureAppRoot()
 
 	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
+
 	if err != nil {
 		log.Fatalw("Error: ", err)
 	}
@@ -141,14 +149,14 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		return
 	}
 
-	// if enablePprof {
-	// 	// Dump the decrypted content to a JSON file
-	// 	err = os.WriteFile(manifestPath, decryptedContent, 0644)
-	// 	if err != nil {
-	// 		log.Fatalw("Writing decrypted content to JSON file: ", "error:", err.Error())
-	// 		return
-	// 	}
-	// } // Uncomment if debuging with pprof
+	if enablePprof {
+		// Dump the decrypted content to a JSON file
+		err = os.WriteFile(manifestPath, decryptedContent, 0644)
+		if err != nil {
+			log.Fatalw("Writing decrypted content to JSON file: ", "error:", err.Error())
+			return
+		}
+	} // Uncomment if debuging with pprof
 
 	manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, decryptedContent)
 	if err != nil {
@@ -168,19 +176,9 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		log.Fatalf("Failed to assemble parts:%v\n", err)
 	}
 
-	if !keepParts { // If keepParts is false, remove the part file
-		// If partsDir was provided
-		log.Debugw("Removing parts directory:",
-			"Directory", partsDir,
-			"Root directory", appRoot,
-		)
-		if partsDir != "" && partsDir != "." && partsDir != "./" &&  partsDir != appRoot {
-			// Remove the directory and all its contents
-			err = os.RemoveAll(partsDir)
-			if err != nil {
-				log.Fatalw("Failed to remove directory: ", "error", err.Error())
-			}
-		}
+	err = f.RemovePartsOrDirectory(u, keepParts, partsDir, appRoot, prefixParts)
+	if err != nil {
+		log.Fatalf("Failed to remove parts or directory: %v\n", err)
 	}
 
 	hash, ok := hashes[manifest.Filename] // This should be in the same method or function as the switch statement.
@@ -196,32 +194,38 @@ func execute(cmd *cobra.Command, args []string) {
 	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(partsDir, prefixParts, log)
-	h := hasher.NewHasher(log)
-	// p := pprofutils.NewPprofUtils(log) // Uncomment if debuging with pprof
+	h := hasher.NewHasher(partsDir, prefixParts, log)
+	p := pprofutils.NewPprofUtils(log, port) // Uncomment if debuging with pprof
 
 	// Process the partsDir value
 	err := f.ProcessPartsDir()
 	if err != nil {
-		log.Fatalf("Failed to create part directory: %w", err)
+		log.Fatalf("Failed to create parts directory: %w", err)
+	}
+	if partsDir == "" {
+		partsDir = f.PartsDir
+		a.PartsDir = f.PartsDir
+		d.PartsDir = f.PartsDir
+		e.PartsDir = f.PartsDir
 	}
 
-	// // Conditionally start pprof if the flag is set
-    // if enablePprof {
-	// 	log.Debugw(
-	// 		"Starting pprof server...",
-	// 		"enablePprof", enablePprof,
-	// 	)
-    //     p.StartPprof()
-    // } // Uncomment if debuging with pprof
+	// Conditionally start pprof if the flag is set
+    if enablePprof {
+		log.Debugw(
+			"Starting pprof server...",
+			"enablePprof", enablePprof,
+		)
+        p.StartPprof()
+    } // Uncomment if debuging with pprof
 
-	// // Listen to errors
-	// go func() {
-	// 	for err := range p.GetErrorChannel() {
-	// 		if err != nil {
-	// 			log.Fatalf("Received an error on pprof error channel: %w", err)
-	// 		}
-	// 	}
-	// }() // Uncomment if debuging with pprof
+	// Listen to errors
+	go func() {
+		for err := range p.GetErrorChannel() {
+			if err != nil {
+				log.Fatalf("Received an error on pprof error channel: %w", err)
+			}
+		}
+	}() // Uncomment if debuging with pprof
 
 	if decryptManifest {
 		log.Debugw("Decrypting manifest file", 
@@ -234,7 +238,7 @@ func execute(cmd *cobra.Command, args []string) {
 
 		partFilesHashes, err := h.HashesFromFiles(partsDir, prefixParts, "sha256")
 		if err != nil {
-			log.Fatalf("Failed to search for files in the current directory: %v\n", err)
+			log.Fatalf("Failed to search for files in the current directory: %v", err)
 		}
 						
 		// Obtain the encryption key
@@ -280,19 +284,13 @@ func execute(cmd *cobra.Command, args []string) {
 
 			// Validate the file integrity
 			h.ValidateFileIntegrity(outputPath, manifest.HashType, manifest.Etag, hash, ok)
-
-			log.Debugw(
-				"Output file path",
-				"outputPath", outputPath,
-			)	
-
 		} else {
 			log.Fatalw("Error: manifest file not found")
 		}
 	} else if downloadOnly {
 		_, _, _, _, _, _, _, _, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
 		if err != nil {
-			log.Fatalf("Failed to download the part files:%v\n", err)
+			log.Fatalf("Failed to download the part files:%v", err)
 		}
 	} else {
 		if urlFile == "" {
@@ -301,12 +299,12 @@ func execute(cmd *cobra.Command, args []string) {
 		run(maxConcurrentConnections, shaSumsURL, urlFile, numParts, partsDir, keepParts, prefixParts, outputFile)
 	}
 
-	// if enablePprof {
-	// 	err := p.DumpDebugPProf()
-	// 	if err != nil {
-	// 		log.Fatalf("Error starting pprof server: %v", err)
-	// 	}
-	// } // Uncomment if debuging with pprof
+	if enablePprof {
+		err := p.DumpDebugPProf()
+		if err != nil {
+			log.Fatalf("Error starting pprof server: %v", err)
+		}
+	} // Uncomment if debuging with pprof
 }
 
 func main() {
