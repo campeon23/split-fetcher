@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,14 +26,18 @@ var BufferPool = &sync.Pool{
 
 type Utils struct {
 	PartsDir 	string
-	Log			*logger.Logger
+	Log 		logger.LoggerInterface
 }
 
-func NewUtils(partsDir string, log *logger.Logger) *Utils {
+func NewUtils(partsDir string, log logger.LoggerInterface) *Utils {
 	return &Utils{
 		PartsDir: partsDir,
 		Log: log,
 	}
+}
+
+func (u *Utils) SetLogger(log logger.LoggerInterface) {
+    u.Log = log
 }
 
 type ProgressWriter struct {
@@ -114,4 +120,14 @@ func (u *Utils) ParseLink(link string) (string, string, string, error) {
 	debugValue := values.Get("debug")
 
 	return resource, "debug", debugValue, nil
+}
+
+func (u *Utils) SanitizePath(path string) string {
+    // Clean the path to remove redundant elements
+    cleanedPath := filepath.Clean(path)
+    // Remove trailing os.PathSeparator if it exists
+    if strings.HasSuffix(cleanedPath, string(os.PathSeparator)) {
+        cleanedPath = cleanedPath[:len(cleanedPath)-1]
+    }
+    return cleanedPath
 }

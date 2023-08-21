@@ -2,10 +2,23 @@ package logger
 
 import (
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type Logger struct {
 	sugar *zap.SugaredLogger
+}
+
+type LoggerInterface interface {
+	Sync()
+	Infow(msg string, keysAndValues ...interface{})
+	Errorf(template string, args ...interface{})
+	Printf(template string, args ...interface{})
+	Debugw(msg string, keysAndValues ...interface{})
+	Debugf(template string, args ...interface{})
+	Warnw(msg string, keysAndValues ...interface{})
+	Fatalw(msg string, keysAndValues ...interface{})
+	Fatalf(template string, args ...interface{})
 }
 
 func (l *Logger) Sync() {
@@ -44,18 +57,28 @@ func (l *Logger) Fatalf(template string, args ...interface{}) {
 	l.sugar.Fatalf(template, args...)
 }
 
-func InitLogger(verbose bool) *Logger {
-	var cfg zap.Config
-	if verbose {
-		cfg = zap.NewDevelopmentConfig() // More verbose logging
-	} else {
-		cfg = zap.NewProductionConfig() // Only INFO level and above
-	}
+func InitLogger(verbose bool, writers ...zapcore.WriteSyncer) *Logger {
+    var cfg zap.Config
+    if verbose {
+        cfg = zap.NewDevelopmentConfig() // More verbose logging
+    } else {
+        cfg = zap.NewProductionConfig() // Only INFO level and above
+    }
 
-	logger, err := cfg.Build()
-	if err != nil {
-		panic(err)
-	}
+    if len(writers) > 0 {
+        core := zapcore.NewCore(
+            zapcore.NewConsoleEncoder(cfg.EncoderConfig),  // Assuming you want console output for tests
+            writers[0],
+            cfg.Level,
+        )
+        logger := zap.New(core)
+        return &Logger{sugar: logger.Sugar()}
+    }
 
-	return &Logger{sugar: logger.Sugar()}
+    logger, err := cfg.Build()
+    if err != nil {
+        panic(err)
+    }
+
+    return &Logger{sugar: logger.Sugar()}
 }

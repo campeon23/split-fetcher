@@ -3,17 +3,14 @@ package pprofutils
 import (
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	_ "net/http/pprof"
 	"net/url"
 	"os"
-	"os/signal"
 	"path"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gocolly/colly"
@@ -24,41 +21,77 @@ import (
 	"github.com/campeon23/multi-source-downloader/utils"
 )
 
-var (
-	wg 	sync.WaitGroup
+const (
+	port = ":6060"
+	certPath = "./certs/pprof_cert.pem"
+	keyPath = "./certs/pprof_key.pem"
+	baseURL = "https://localhost" + port + "/debug/pprof/" // Assuming you're running the pprof locally
 )
 
+type Server interface {
+	ListenAndServeTLS(certFile, keyFile string) error
+	Shutdown(ctx context.Context) error
+}
+ 
 type PprofUtils struct {
-	Log	*logger.Logger
-	errCh chan error // shared error channel
+	Log		logger.LoggerInterface
+	ErrCh 	chan error // shared error channel
+	Server 	Server
+	Addr 	string
+	wg      sync.WaitGroup
+	errChMu sync.Mutex // Add a mutex for synchronizing error channel writes
 }
 
-func NewPprofUtils(log *logger.Logger) *PprofUtils {
+func (p *PprofUtils) SetLogger(log logger.LoggerInterface) {
+    p.Log = log
+}
+
+type KeyPressReader interface {
+    WaitForKeyPress() byte
+}
+
+type RealKeyPressReader struct{}
+
+func (r *RealKeyPressReader) WaitForKeyPress() byte {
+    var key byte
+    fmt.Scanf("%c", &key)
+    return key
+}
+
+func (p *PprofUtils) writeToErrCh(err error) {
+	p.errChMu.Lock() // Lock before writing to the error channel
+	defer p.errChMu.Unlock()
+
+	select {
+	case p.ErrCh <- err:
+	default:
+	}
+}
+
+func NewPprofUtils(log logger.LoggerInterface, addr string) *PprofUtils {
 	return &PprofUtils{
 		Log: log,
-		errCh: make(chan error, 1), // Initialize error channel
+		ErrCh: make(chan error, 1), // Initialize error channel
+		Server: &http.Server{
+			Addr: addr,
+		},
+		Addr: addr,
 	}
 }
 
 func (p *PprofUtils) GetErrorChannel() chan error {
-	return p.errCh
+	return p.ErrCh
 }
 
-func (p *PprofUtils) StartServerWithShutdown(addr, certPath, keyPath string) chan error {
-	srv := &http.Server{
-		Addr: addr,
-	}
+func (p *PprofUtils) StartServerWithShutdown(addr string, certPath string, keyPath string, reader KeyPressReader) chan error {
+    // Handle OS signals
+	osSignalChan := p.handleOSSignals() // Initialize the OS signal handling
 
-	// Handle OS signals
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTSTP)
-
-	// Listen for 's' keypress
+	// Your existing logic for keypress
 	keyPressChan := make(chan bool, 1)
 	go func() {
 		for {
-			var key byte
-			fmt.Scanf("%c", &key)
+			key := reader.WaitForKeyPress()
 			if key == 's' {
 				keyPressChan <- true
 			}
@@ -67,15 +100,17 @@ func (p *PprofUtils) StartServerWithShutdown(addr, certPath, keyPath string) cha
 
 	// Start server
 	go func() {
-		if err := srv.ListenAndServeTLS(certPath, keyPath); err != http.ErrServerClosed {
-			p.errCh <- fmt.Errorf("server error: %w" +  err.Error())
+		if err := p.Server.ListenAndServeTLS(certPath, keyPath); err != http.ErrServerClosed {
+			p.writeToErrCh(fmt.Errorf("server error: %w", err)) // Use the new method to write to the error channel
 		}
 	}()
 
 	// Block until signal or keypress is received
 	select {
-	case <-signalChan:
+	case <-osSignalChan:
 		p.Log.Infow("Received an interrupt, stopping services...")
+		// Handle the signal here (like clean up resources, etc.)
+		os.Exit(0)
 	case <-keyPressChan:
 		p.Log.Infow("Received 's' keypress, stopping services...")
 	}
@@ -83,50 +118,38 @@ func (p *PprofUtils) StartServerWithShutdown(addr, certPath, keyPath string) cha
 	// Gracefully shutdown the server
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(timeoutCtx); err != nil {
-		p.errCh <- fmt.Errorf("server shutdown error: %w" + err.Error())
+	if err := p.Server.Shutdown(timeoutCtx); err != nil {
+		p.writeToErrCh(fmt.Errorf("server shutdown error: %w", err)) // Use the new method to write to the error channel
 	} else {
 		p.Log.Infow("server gracefully stopped.")
+		p.writeToErrCh(nil)  // Use the new method to write to the error channel
 	}
 
 	// Wait for pprof server to shutdown gracefully if it was started
-	wg.Wait()
+	p.wg.Wait()
 
-	select {
-	case err := <-p.errCh:
-		if err != nil {
-			return p.errCh // Return the channel with the error
-		}
-		close(p.errCh)
-		return nil
-	default:
-		close(p.errCh)
-		return nil
-	}
+	return p.ErrCh
 }
 
 func (p *PprofUtils) StartPprof() chan error {
-	wg.Add(1)
+	p.wg.Add(1)
 
-	certPath := "./certs/pprof_cert.pem"
-	keyPath := "./certs/pprof_key.pem"
-
-	p.Log.Infow("Starting pprof server on :6060")
+	p.Log.Infow("Starting pprof server", "port", port)
 
 	go func() {
-		defer wg.Done()
+		defer p.wg.Done()
 		
 		// Start the HTTP server with graceful shutdown using TLS
-		serverErrCh := p.StartServerWithShutdown(":6060", certPath, keyPath)
+		 serverErrCh := p.StartServerWithShutdown(port, certPath, keyPath, &RealKeyPressReader{})
 		// If server encounters error, pass it to our errCh
 		select {
 		case err := <-serverErrCh:
-			p.errCh <- err
+			p.ErrCh <- err
 		default:
 		}
 	}()
 
-	return nil
+	return p.ErrCh
 }
 
 func (p *PprofUtils) DumpDebugPProf() error {
@@ -139,17 +162,14 @@ func (p *PprofUtils) DumpDebugPProf() error {
 	c := colly.NewCollector()
 	f := fileutils.NewFileutils(partsDir, prefixParts, p.Log)
 	u := utils.NewUtils("", p.Log)
-	// This will bypass SSL certificate verification (useful for local development)
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-	const baseURL = "https://localhost:6060/debug/pprof/" // Assuming you're running the pprof locally
 	var fileName string
 	var err error
 
 	// Check if debug directory exists; if not, create it
 	if _, err := os.Stat("debug"); os.IsNotExist(err) {
 		if err := os.Mkdir("debug", 0755); err != nil {
-			p.Log.Printf("Failed to create directory: %v", err)
+			return fmt.Errorf("failed to create directory: %w", err)
 		}
 	}
 
@@ -171,10 +191,9 @@ func (p *PprofUtils) DumpDebugPProf() error {
 
 	// Callback when a visited link is found
 	c.OnHTML("a[href]", func(t *colly.HTMLElement) {
-
 		link := t.Attr("href")
 		// Send GET request to the link with query parameter
-		resp, err := http.Get(baseURL + link)
+		resp, err := http.DefaultClient.Get(baseURL + link)
 		if err != nil {
 			p.Log.Errorf("failed querying %s: %v", baseURL, err)
 			return
@@ -188,7 +207,7 @@ func (p *PprofUtils) DumpDebugPProf() error {
 		if resp.Header.Get("Content-Encoding") == "gzip" {
 			gzipReader, err := gzip.NewReader(resp.Body)
 			if err != nil {
-				p.Log.Errorf("error creating gzip reader:", err)
+				p.Log.Errorf("error creating gzip reader: %v", err)
 				return
 			}
 			defer gzipReader.Close()
@@ -198,20 +217,22 @@ func (p *PprofUtils) DumpDebugPProf() error {
 		// Read response body
 		data, err := io.ReadAll(reader)
 		if err != nil {
-			p.Log.Errorf("error reading response body:", err)
+			p.Log.Errorf("error reading response body: %v", err)
 			return
 		}
 
 		// Check if the content type is binary
-		if contentType == "application/octet-stream" {
+		switch contentType {
+		case "application/octet-stream":
 			p.Log.Debugf("Warning: Saving binary profile data for %s", link)
-		} else if contentType != "text/plain" {
+		case "text/plain":
+		default:
 			p.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
 		}
 
 		resource, dumpType, value, err := u.ParseLink(link)
 		if err != nil {
-			p.Log.Errorf("Error:", err)
+			p.Log.Errorf("Error: %v", err)
 			return
 		}
 

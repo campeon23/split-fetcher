@@ -13,20 +13,25 @@ import (
 
 	"github.com/campeon23/multi-source-downloader/hasher"
 	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/multi-source-downloader/utils"
 )
 
 type Fileutils struct {
 	PartsDir	string
 	PrefixParts	string
-	Log	*logger.Logger
+	Log			logger.LoggerInterface
 }
 
-func NewFileutils(partsDir string, prefixParts string, log *logger.Logger) *Fileutils {
+func NewFileutils(partsDir string, prefixParts string, log logger.LoggerInterface) *Fileutils {
 	return &Fileutils{
 		PartsDir: partsDir,
 		PrefixParts: prefixParts,
 		Log: log,
 	}
+}
+
+func (f *Fileutils) SetLogger(log logger.LoggerInterface) {
+    f.Log = log
 }
 
 func (f *Fileutils) PathExists(path string) bool {
@@ -78,9 +83,10 @@ func (f *Fileutils) RemoveExtensions(filename string) string {
 }
 
 func (f *Fileutils) CombinedMD5HashForPrefixedFiles(dir string, prefix string) (string, error) {
-	h := hasher.NewHasher(f.Log)
+	const hashType = "md5"
+	h := hasher.NewHasher(f.PartsDir, f.PrefixParts, f.Log)
 
-	hashes, err := h.HashesFromFiles(dir, prefix, "md5")
+	hashes, err := h.HashesFromFiles(dir, prefix, hashType)
 	if err != nil {
 		return "", fmt.Errorf("failed to search for files in the current directory: %v", err)
 	}
@@ -92,26 +98,10 @@ func (f *Fileutils) CombinedMD5HashForPrefixedFiles(dir string, prefix string) (
 	return hex.EncodeToString(finalHash[:]), nil
 }
 
-func (f *Fileutils) DownloadAndParseHashFile(h *hasher.Hasher, shaSumsURL string) (map[string]string, error) {
-	hashes := make(map[string]string)
-	if len(shaSumsURL) != 0 {
-		f.Log.Infow("Initializing HTTP request")
-		f.Log.Debugw("Creating HTTP request for URL", "URL", shaSumsURL)
-
-		var err error
-		hashes, err = h.DownloadAndParseHashFile(shaSumsURL)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return hashes, nil
-}
-
 func (f *Fileutils) EnsureAppRoot() (string, error) {
 	appRoot, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to obtain the current working directory: %v", err)
 	}
 
 	if !strings.HasSuffix(appRoot, string(os.PathSeparator)) {
@@ -165,55 +155,110 @@ func (f *Fileutils) ExtractPathAndFilename(path string) (string, string, error) 
 
 // ValidatePath checks if the given path adheres to our constraints.
 func (f *Fileutils) ValidatePath(path string) (string, error) {
-	// Check for path escaping out of home directory
-	if strings.Contains(path, "../") {
-		return "", errors.New("invalid path - escaping directory not allowed")
-	}
+	currentDirectory, err := os.Getwd()
+    if err != nil {
+        return "", errors.New("error getting current directory")
+    }
 
-	// Check for root directory
-	if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "./") && !strings.HasPrefix(path, "~/") {
-		return "", errors.New("invalid path - outside home directory not allowed")
-	}
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        return "", errors.New("error getting user home directory")
+    }
 
-	// Regular expression for valid directory and path names
-	dirRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	filenameRegex := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+    // Check for path escaping out of home directory
+    if strings.Contains(path, "../") {
+        return "", errors.New("invalid path - escaping directory not allowed")
+    }
 
-	// Split path and validate each part
-	parts := strings.Split(path, "/")
-	f.Log.Debugw(
-		"Validating dirs and filenames in path", 
-		"parts", parts,
-	)
-	for _, part := range parts {
-		if part == "." || part == "~" || part == "" {
-			continue
-		}
-		if !dirRegex.MatchString(part) && !filenameRegex.MatchString(part) {
-			return "", errors.New("invalid character in path or filename")
-		}
-	}
+    // Check if the path is absolute (starts with "/")
+    if strings.HasPrefix(path, "/") {
+        if !strings.HasPrefix(path, currentDirectory) && !strings.HasPrefix(path, homeDir) {
+            return "", errors.New("invalid path - outside home or app directory not allowed")
+        }
+    }
 
-	// Check for valid paths starting with ~ or ./
-	if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "~/") {
-		directory, filename, err := f.ExtractPathAndFilename(path)
-		if err != nil {
-			return "", errors.New("invalid path format")
-		}
-		return fmt.Sprintf("Valid path. Directory: %s. Filename: %s", directory, filename), nil
-	}
+    // Regular expression for valid directory and path names
+    dirRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+    filenameRegex := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
-	return "", nil
+    // Split path and validate each part
+    parts := strings.Split(path, "/")
+    for _, part := range parts {
+        if part == "." || part == "~" || part == "" {
+            continue
+        }
+        if !dirRegex.MatchString(part) && !filenameRegex.MatchString(part) {
+            return "", errors.New("invalid character in path or filename")
+        }
+    }
+
+    // Check for valid paths starting with ~ or ./
+    if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "~/") {
+        directory, filename, err := f.ExtractPathAndFilename(path)
+        if err != nil {
+            return "", errors.New("invalid path format")
+        }
+        return fmt.Sprintf("Valid path. Directory: %s. Filename: %s", directory, filename), nil
+    }
+
+	return fmt.Sprintf("Valid path. Directory: %s", path), nil
 }
 
 func (f *Fileutils) ProcessPartsDir() error {
+	if f.PartsDir == "" {
+		var err error
+		f.PartsDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("error getting current directory: %w", err)
+		}
+	}
+
 	_, err := f.ValidatePath(f.PartsDir)
 	if err != nil {
 		return fmt.Errorf("invalid parts directory: %w", err)
 	}
+
 	err = f.ValidateCreatePath(f.PartsDir)
 	if err != nil {
 		return fmt.Errorf("failed to create parts directory: %w", err)
 	}
+
+	f.Log.Debugf("Parts directory: %s", f.PartsDir)
+
 	return nil
+}
+
+func (f *Fileutils) RemovePartsOrDirectory(u *utils.Utils, keepParts bool, partsDir string, appRoot string, prefixParts string) error {
+    if !keepParts {
+        sanitizedPartsDir := u.SanitizePath(partsDir)  // Ensure `u` or your utility is accessible here or replace appropriately.
+        sanitizedAppRoot := u.SanitizePath(appRoot)
+
+        f.Log.Debugw("Removing parts directory:",
+            "Directory", partsDir,
+            "Root directory", appRoot,
+        )
+
+        // If sanitizedPartsDir matches sanitizedAppRoot, remove only files with a specific prefix
+        if sanitizedPartsDir == sanitizedAppRoot {
+            files, err := os.ReadDir(sanitizedPartsDir)
+            if err != nil {
+                return fmt.Errorf("failed to read directory: %w", err)
+            }
+            for _, file := range files {
+                if strings.HasPrefix(file.Name(), prefixParts) {
+                    err = os.Remove(filepath.Join(sanitizedPartsDir, file.Name()))
+                    if err != nil {
+                        f.Log.Warnw("Failed to remove file:", "file", file.Name(), "error", err.Error())
+                    }
+                }
+            }
+        } else if sanitizedPartsDir != "" && sanitizedPartsDir != "." && sanitizedPartsDir != "./" {
+            // Remove the directory and all its contents
+            err := os.RemoveAll(partsDir)
+            if err != nil {
+                return fmt.Errorf("failed to remove parts directory: %w", err)
+            }
+        }
+    }
+    return nil
 }

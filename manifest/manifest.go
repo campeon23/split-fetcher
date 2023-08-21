@@ -17,7 +17,7 @@ import (
 type Manifest struct {
 	PartsDir		string
 	PrefixParts		string
-	Log				*logger.Logger
+	Log				logger.LoggerInterface
 }
 
 // Adding a new structure to represent the JSON manifest
@@ -29,6 +29,8 @@ type DownloadManifest struct {
 	URL              string                `json:"url"`
 	Etag			 string                `json:"etag"`
 	HashType		 string                `json:"hash_type"`
+	PartsDir		 string				   `json:"parts_dir"`
+	PrefixParts		 string				   `json:"prefix_parts"`
 	Size			 int                   `json:"size"`
 	NumParts         int                   `json:"num_parts"`
 	RangeSize		 int                   `json:"range_size"`
@@ -42,12 +44,16 @@ type DownloadedPart struct {
 	PartFile   string `json:"part_file"`
 }
 
-func NewManifest(partsDir string, prefixParts string, log *logger.Logger) *Manifest {
+func NewManifest(partsDir string, prefixParts string, log logger.LoggerInterface) *Manifest {
 	return &Manifest{
 		PartsDir: partsDir,
 		PrefixParts: prefixParts,
 		Log: log,
 	}
+}
+
+func (m *Manifest) SetLogger(log logger.LoggerInterface) {
+    m.Log = log
 }
 
 func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string, error)  {
