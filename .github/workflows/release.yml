@@ -13,6 +13,13 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
+      
+      # Install golangci-lint
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v2
+        with:
+          version: latest
+          only-new-issues: false
           
       - name: Set up Go
         uses: actions/setup-go@v2
@@ -23,6 +30,6 @@ jobs:
         uses: goreleaser/goreleaser-action@v2
         with:
           version: latest
-          args: release --rm-dist
+          args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
