@@ -11,8 +11,10 @@
 # Compiled binary
 multi-source-downloader
 
-# Archives files
+# Swap files
+*.swp
 
+# Archives files
 *.tar.gz
 
 # Build Directories
