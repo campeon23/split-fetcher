@@ -22,11 +22,11 @@ builds:
       - darwin
 #Configuration for building packages for rpm and deb package managers
 nfpms:
-  - package_name: shagen
-    homepage: https://github.com/rexfordnyrk/shagen/
-    maintainer: Rexford A. Nyarko <rexfordnyrk@gmail.com>
+  - package_name: multi-source-downloader
+    homepage: https://github.com/campeon23/multi-source-downloader/
+    maintainer: Marco A. Villarruel <marco@wildberry.us>
     description: |-
-            Shagen installer package. CLI application to generate SHA256 hashes of texts.
+            The multiple source downloader is an application written in Go that splits the file to be downloaded into n parts and downloads them concurrently in an optimized manner.
     formats:
       - rpm
       - deb
@@ -46,6 +46,8 @@ archives:
     format_overrides:
     - goos: windows
       format: zip
+    files:
+      - '!*.sbom'
 checksum:
   name_template: 'checksums.txt'
 snapshot:
