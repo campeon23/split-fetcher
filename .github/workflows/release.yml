@@ -53,5 +53,6 @@ jobs:
       - name: Scan SBOM files in 'dist' directory with Grype
         run: |
           for file in $(find dist -type f -name "*.sbom"); do
-            grype sbom:$file
+            echo "Scanning $file for vulnerabilities..."
+            grype sbom:$file --add-cpes-if-none --fail-on="high" --fail-on="critical" 
           done
