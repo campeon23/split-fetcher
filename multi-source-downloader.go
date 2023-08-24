@@ -147,7 +147,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		log.Fatalf("Decrypting manifest file: %w", err)
 	}
 
-	if enablePprof {
+	if keepParts {
 		// Dump the decrypted content to a JSON file
 		err = os.WriteFile(manifestPath, decryptedContent, 0644)
 		if err != nil {
