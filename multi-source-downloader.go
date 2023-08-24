@@ -37,7 +37,7 @@ var (
 	verbose 					bool
 	log 						*logger.Logger // Declared at package level to use the logger across different functions in this package
 	enablePprof 				bool // Uncomment if debuging with pprof
-
+	decryptedContent 			[]byte
 )
 
 var rootCmd = &cobra.Command{
@@ -70,12 +70,13 @@ func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "max-connections", "c", 0, `(Optional) Controls how many parts of the 
 file are downloaded at the same time. You can set a specific number, 
-or if you set it to 0, it will choose the best number for you.`)
+or if you set it to 0, it will choose the maximum concurrenct connections,
+equal to the number of chunk parts to split the file.`)
 	rootCmd.PersistentFlags().StringVarP(&shaSumsURL, 	"sha-sums", 	 	"s", "", `(Optional) The URL of the file containing the hashes refers to a file 
 with either MD5 or SHA-256 hashes, used to verify the integrity and 
 authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&urlFile, 		"url", 			 	 "u", "",		"(Required) URL of the file to download")
-	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 	 "n", 2, 	 	"(Optional) Number of parts to split the download into")
+	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 	 "n", 2, 	 	"(Optional) Number of parts to split the download into. Default value is 2")
 	rootCmd.PersistentFlags().StringVarP(&partsDir, 	"parts-dir", 	  	 "p", "", 	 	"(Optional) The directory to save the parts files")
 	rootCmd.PersistentFlags().StringVarP(&prefixParts, 	"prefix-parts", 	 "x", "output", "(Optional) The prefix to use for naming the parts files")
 	rootCmd.PersistentFlags().StringVarP(&proxy, 		"proxy", 		 	 "r", "", 	 	"(Optional) Proxy to use for the download")
@@ -90,35 +91,35 @@ only output INFO logging.`)
 	rootCmd.PersistentFlags().BoolVarP(&enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
 
 	err := viper.BindPFlag("max-connections", 	rootCmd.PersistentFlags().Lookup("max-connections"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag max-connections to viper: %w", err) }
 	err = viper.BindPFlag("sha-sums", 			rootCmd.PersistentFlags().Lookup("sha-sums"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag sha-sums to viper: %w", err) }
 	err = viper.BindPFlag("url", 				rootCmd.PersistentFlags().Lookup("url"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag url to viper: %w", err) }
 	err = viper.BindPFlag("num-parts", 			rootCmd.PersistentFlags().Lookup("num-parts"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag num-parts to viper: %w", err) }
 	err = viper.BindPFlag("parts-dir", 			rootCmd.PersistentFlags().Lookup("parts-dir"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag parts-dir to viper: %w", err) }
 	err = viper.BindPFlag("prefix-parts", 		rootCmd.PersistentFlags().Lookup("prefix-parts"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag prefix-parts to viper: %w", err) }
 	err = viper.BindPFlag("proxy", 				rootCmd.PersistentFlags().Lookup("proxy"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag proxy to viper: %w", err) }
 	err = viper.BindPFlag("keep-parts", 		rootCmd.PersistentFlags().Lookup("keep-parts"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag keep-parts to viper: %w", err) }
 	err = viper.BindPFlag("decrypt-manifest", 	rootCmd.PersistentFlags().Lookup("decrypt-manifest"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag decrypt-manifest to viper: %w", err) }
 	err = viper.BindPFlag("manifest-file", 		rootCmd.PersistentFlags().Lookup("manifest-file"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag manifest-file to viper: %w", err) }
     err = viper.BindPFlag("download-only", 		rootCmd.PersistentFlags().Lookup("download-only"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag download-only to viper: %w", err) }
     err = viper.BindPFlag("assemble-only", 		rootCmd.PersistentFlags().Lookup("assemble-only"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag assemble-only to viper: %w", err) }
     err = viper.BindPFlag("output", 			rootCmd.PersistentFlags().Lookup("output"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag output to viper: %w", err) }
 	err = viper.BindPFlag("verbose", 			rootCmd.PersistentFlags().Lookup("verbose"))
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag verbose to viper: %w", err) }
 	err = viper.BindPFlag("enable-pprof", 		rootCmd.PersistentFlags().Lookup("enable-pprof")) // Uncomment if debuging with pprof
-	if err != nil { return }
+	if err != nil { log.Fatalf("Error binding flag enable-pprof to viper: %w", err) }
 }
 
 func initConfig() {
@@ -136,31 +137,27 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	appRoot, _ := f.EnsureAppRoot()
 
 	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
-
 	if err != nil {
-		log.Fatalw("Error: ", err)
+		log.Fatalf("Failed to download the part files:%w", err)
 	}
 
 	// Decrypt the downloaded manifest
-	var decryptedContent []byte
 	decryptedContent, err = e.DecryptFile(manifestPath + ".enc", key, false)
 	if err != nil {
-		log.Fatalw("Decrypting manifest file: ", "error:", err.Error())
-		return
+		log.Fatalf("Decrypting manifest file: %w", err)
 	}
 
 	if enablePprof {
 		// Dump the decrypted content to a JSON file
 		err = os.WriteFile(manifestPath, decryptedContent, 0644)
 		if err != nil {
-			log.Fatalw("Writing decrypted content to JSON file: ", "error:", err.Error())
-			return
+			log.Fatalf("Writing decrypted content to JSON file: %w", err)
 		}
-	} // Uncomment if debuging with pprof
+	}
 
 	manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, decryptedContent)
 	if err != nil {
-		log.Fatalf("Failed to prepare assembly environment: %v\n", err)
+		log.Fatalf("Failed to prepare assembly environment: %w", err)
 	}
 	defer outFile.Close() // Close the file after the function returns
 
@@ -173,12 +170,12 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	// Assemble the file from the downloaded parts
 	err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{})
 	if err != nil {
-		log.Fatalf("Failed to assemble parts:%v\n", err)
+		log.Fatalf("Failed to assemble parts: %w", err)
 	}
 
 	err = f.RemovePartsOrDirectory(u, keepParts, partsDir, appRoot, prefixParts)
 	if err != nil {
-		log.Fatalf("Failed to remove parts or directory: %v\n", err)
+		log.Fatalf("Failed to remove parts or directory: %w", err)
 	}
 
 	hash, ok := hashes[manifest.Filename] // This should be in the same method or function as the switch statement.
@@ -238,19 +235,19 @@ func execute(cmd *cobra.Command, args []string) {
 
 		partFilesHashes, err := h.HashesFromFiles(partsDir, prefixParts, "sha256")
 		if err != nil {
-			log.Fatalf("Failed to search for files in the current directory: %v", err)
+			log.Fatalf("Failed to search for files in the current directory: %w", err)
 		}
 						
 		// Obtain the encryption key
 		key, err := e.CreateEncryptionKey(partFilesHashes)
 		if err != nil {
-			log.Fatalw("Error:", err)
+			log.Fatalf("Failed to create encryption key: %w", err)
 		}
 
         // Decrypt the downloaded manifest
         _, err = e.DecryptFile(manifestFile, key, true)
         if err != nil {
-            log.Fatalw("Decrypting manifest file: ", "error:", err.Error())
+            log.Fatalf("Failed to decrypt manifest file: %w", err)
         }
 
     } else if assembleOnly {
@@ -265,18 +262,18 @@ func execute(cmd *cobra.Command, args []string) {
 			// Load file from disk
 			manifestContent, err := os.ReadFile(manifestFile)
 			if err != nil {
-				log.Fatalw("Loading manifest file: ", "error", err.Error())
+				log.Fatalf("Failed to load manifest file: %w", err)
 			}
 
 			manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, manifestContent)
 			if err != nil {
-				log.Fatalf("Failed to prepare assembly environment: %v\n", err)
+				log.Fatalf("Failed to prepare assembly environment: %w", err)
 			}
 			defer outFile.Close() // Close the file after the function returns
 
 			err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{}) // make sure to modify this method to receive and handle your manifest file
 			if err != nil {
-				log.Fatalf("Failed to assemble parts:%v\n", err)
+				log.Fatalf("Failed to assemble parts: %w", err)
 			}
 
 			hash := manifest.FileHash
@@ -290,7 +287,7 @@ func execute(cmd *cobra.Command, args []string) {
 	} else if downloadOnly {
 		_, _, _, _, _, _, _, _, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
 		if err != nil {
-			log.Fatalf("Failed to download the part files:%v", err)
+			log.Fatalf("Failed to download the part files: %w", err)
 		}
 	} else {
 		if urlFile == "" {
@@ -302,7 +299,7 @@ func execute(cmd *cobra.Command, args []string) {
 	if enablePprof {
 		err := p.DumpDebugPProf()
 		if err != nil {
-			log.Fatalf("Error starting pprof server: %v", err)
+			log.Fatalf("Error starting pprof server: %w", err)
 		}
 	} // Uncomment if debuging with pprof
 }
@@ -313,6 +310,6 @@ func main() {
 	// arguments and running the appropriate subcommands or functions as defined in 
 	// the program.
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatalf("Error: %v", err)
+		log.Fatalf("Error executing rootCmd object from Cobra command: %w", err)
 	}
 }
