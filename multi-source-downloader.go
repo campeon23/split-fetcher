@@ -239,7 +239,7 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 	go func() {
 		for err := range p.GetErrorChannel() {
 			if err != nil {
-				log.Fatalf("Received an error on pprof error channel: %w", err)
+				log.Printf("Received an error on pprof error channel: %w", err)
 			}
 		}
 	}() // Uncomment if debuging with pprof
@@ -330,6 +330,6 @@ func main() {
 	// arguments and running the appropriate subcommands or functions as defined in 
 	// the program.
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatalf("Error executing rootCmd object from Cobra command: %w", err)
+		log.Printf("Error executing rootCmd object from Cobra command: %w", err)
 	}
 }
