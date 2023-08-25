@@ -90,40 +90,32 @@ authenticity of the downloaded file.`)
 only output INFO logging.`)
 	rootCmd.PersistentFlags().BoolVarP(&enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
 
-	err := viper.BindPFlag("max-connections", 	rootCmd.PersistentFlags().Lookup("max-connections"))
-	if err != nil { log.Fatalf("Error binding flag max-connections to viper: %w", err) }
-	err = viper.BindPFlag("sha-sums", 			rootCmd.PersistentFlags().Lookup("sha-sums"))
-	if err != nil { log.Fatalf("Error binding flag sha-sums to viper: %w", err) }
-	err = viper.BindPFlag("url", 				rootCmd.PersistentFlags().Lookup("url"))
-	if err != nil { log.Fatalf("Error binding flag url to viper: %w", err) }
-	err = viper.BindPFlag("num-parts", 			rootCmd.PersistentFlags().Lookup("num-parts"))
-	if err != nil { log.Fatalf("Error binding flag num-parts to viper: %w", err) }
-	err = viper.BindPFlag("parts-dir", 			rootCmd.PersistentFlags().Lookup("parts-dir"))
-	if err != nil { log.Fatalf("Error binding flag parts-dir to viper: %w", err) }
-	err = viper.BindPFlag("prefix-parts", 		rootCmd.PersistentFlags().Lookup("prefix-parts"))
-	if err != nil { log.Fatalf("Error binding flag prefix-parts to viper: %w", err) }
-	err = viper.BindPFlag("proxy", 				rootCmd.PersistentFlags().Lookup("proxy"))
-	if err != nil { log.Fatalf("Error binding flag proxy to viper: %w", err) }
-	err = viper.BindPFlag("keep-parts", 		rootCmd.PersistentFlags().Lookup("keep-parts"))
-	if err != nil { log.Fatalf("Error binding flag keep-parts to viper: %w", err) }
-	err = viper.BindPFlag("decrypt-manifest", 	rootCmd.PersistentFlags().Lookup("decrypt-manifest"))
-	if err != nil { log.Fatalf("Error binding flag decrypt-manifest to viper: %w", err) }
-	err = viper.BindPFlag("manifest-file", 		rootCmd.PersistentFlags().Lookup("manifest-file"))
-	if err != nil { log.Fatalf("Error binding flag manifest-file to viper: %w", err) }
-    err = viper.BindPFlag("download-only", 		rootCmd.PersistentFlags().Lookup("download-only"))
-	if err != nil { log.Fatalf("Error binding flag download-only to viper: %w", err) }
-    err = viper.BindPFlag("assemble-only", 		rootCmd.PersistentFlags().Lookup("assemble-only"))
-	if err != nil { log.Fatalf("Error binding flag assemble-only to viper: %w", err) }
-    err = viper.BindPFlag("output", 			rootCmd.PersistentFlags().Lookup("output"))
-	if err != nil { log.Fatalf("Error binding flag output to viper: %w", err) }
-	err = viper.BindPFlag("verbose", 			rootCmd.PersistentFlags().Lookup("verbose"))
-	if err != nil { log.Fatalf("Error binding flag verbose to viper: %w", err) }
-	err = viper.BindPFlag("enable-pprof", 		rootCmd.PersistentFlags().Lookup("enable-pprof")) // Uncomment if debuging with pprof
-	if err != nil { log.Fatalf("Error binding flag enable-pprof to viper: %w", err) }
+	bindFlagToViper("max-connections")
+	bindFlagToViper("sha-sums")
+	bindFlagToViper("url")
+	bindFlagToViper("num-parts")
+	bindFlagToViper("parts-dir")
+	bindFlagToViper("prefix-parts")
+	bindFlagToViper("proxy")
+	bindFlagToViper("keep-parts")
+	bindFlagToViper("decrypt-manifest")
+	bindFlagToViper("manifest-file")
+    bindFlagToViper("download-only")
+    bindFlagToViper("assemble-only")
+    bindFlagToViper("output")
+	bindFlagToViper("verbose")
+	bindFlagToViper("enable-pprof") // Uncomment if debuging with pprof
 }
 
 func initConfig() {
 	viper.AutomaticEnv() // read in environment variables that match
+}
+
+func bindFlagToViper(flagName string) {
+	err := viper.BindPFlag(flagName, rootCmd.PersistentFlags().Lookup(flagName))
+	if err != nil {
+		log.Fatalf("Error binding flag %s to viper: %v", flagName, err)
+	}
 }
 
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string, log logger.LoggerInterface){
