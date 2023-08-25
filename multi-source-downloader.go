@@ -35,9 +35,9 @@ var (
     assembleOnly 				bool
     outputFile 					string
 	verbose 					bool
-	log 						*logger.Logger // Declared at package level to use the logger across different functions in this package
 	enablePprof 				bool // Uncomment if debuging with pprof
 	decryptedContent 			[]byte
+	log 						logger.LoggerInterface
 )
 
 var rootCmd = &cobra.Command{
@@ -126,7 +126,7 @@ func initConfig() {
 	viper.AutomaticEnv() // read in environment variables that match
 }
 
-func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string){
+func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string, log logger.LoggerInterface){
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
 	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
@@ -184,7 +184,14 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 }
 
 func execute(cmd *cobra.Command, args []string) {
-	log = logger.InitLogger(verbose) // Keep track of returned logger
+	// Ticket: Logger Initialization Placement 
+	// Package Name: main
+	// Function Name: execute
+	// Description: Logger was initialized inside the execute function.
+	// This has been noted and might be considered for a refactor to initialize at the 
+	// package or main function level in the future. Doing so would make it available 
+	// for all functions and scenarios. Current initialization is scoped to this function.
+	log := logger.InitLogger(verbose) // Keep track of returned logger
     log.Debugw("Logger initialized")
 
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
@@ -293,7 +300,7 @@ func execute(cmd *cobra.Command, args []string) {
 		if urlFile == "" {
 			log.Fatalw("Error: the --url flag is required")
 		}
-		run(maxConcurrentConnections, shaSumsURL, urlFile, numParts, partsDir, keepParts, prefixParts, outputFile)
+		run(maxConcurrentConnections, shaSumsURL, urlFile, numParts, partsDir, keepParts, prefixParts, outputFile, log)
 	}
 
 	if enablePprof {

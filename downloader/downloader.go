@@ -36,11 +36,10 @@ type Downloader struct {
 	PartsDir 					string
 	PrefixParts 				string
 	Proxy 						string
-	// Log							*logger.Logger
 	Log 						logger.LoggerInterface
 }
 
-func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, prefixParts string, proxy string, log *logger.Logger) *Downloader {
+func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, prefixParts string, proxy string, log logger.LoggerInterface) *Downloader {
 	return &Downloader{
 		URLFile: urlFile, 
 		NumParts: numParts,
