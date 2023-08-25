@@ -41,7 +41,7 @@ type AppConfig struct {
 	BindFlagsToViper 			func(string, logger.LoggerInterface)
 }
 
-// var log = logger.InitLogger(false)
+var log = logger.InitLogger(false)
 
 var rootCmd = &cobra.Command{
 	Use:   "multi-source-downloader",
@@ -117,7 +117,6 @@ func (cfg *AppConfig) BindFlagToViper(flagName string, log logger.LoggerInterfac
 }
 
 func NewAppConfig() *AppConfig {
-	log := logger.InitLogger(false)
 	cfg := &AppConfig{
 		maxConcurrentConnections: viper.GetInt("max-connections"),
 		shaSumsURL 				: viper.GetString("sha-sums"),
@@ -326,7 +325,6 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 }
 
 func main() {
-	log := logger.InitLogger(false)
 	// calls the Execute method on the rootCmd object, which is likely an instance of
 	// a Cobra command. The Execute method runs the CLI, parsing the command-line 
 	// arguments and running the appropriate subcommands or functions as defined in 
