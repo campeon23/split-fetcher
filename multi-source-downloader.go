@@ -20,7 +20,7 @@ const (
 	port = ":6060"
 )
 
-var (
+type AppConfig struct {
 	maxConcurrentConnections 	int
 	shaSumsURL 					string
 	urlFile  					string
@@ -38,7 +38,10 @@ var (
 	enablePprof 				bool // Uncomment if debuging with pprof
 	decryptedContent 			[]byte
 	log 						logger.LoggerInterface
-)
+	BindFlagsToViper 			func(string, logger.LoggerInterface)
+}
+
+// var log = logger.InitLogger(false)
 
 var rootCmd = &cobra.Command{
 	Use:   "multi-source-downloader",
@@ -50,77 +53,95 @@ It then assembles the final file, with support for either Etag validation or Has
 validation, to ensure file integrity. And more things...`,
 	Run:   func(cmd *cobra.Command, args []string) {
 		// Retrieve the values of your flags
-		manifestFile 	= viper.GetString("manifest-file")
-		decryptManifest = viper.GetBool("decrypt-manifest")
-        downloadOnly 	= viper.GetBool("download-only")
-        assembleOnly 	= viper.GetBool("assemble-only")
-        outputFile 	 	= viper.GetString("output")
-		partsDir 	 	= viper.GetString("parts-dir")
-		prefixParts	 	= viper.GetString("prefix-parts")
-		proxy 		 	= viper.GetString("proxy")
-		keepParts 	 	= viper.GetBool("keep-parts")
-		enablePprof  	= viper.GetBool("enable-pprof") // Uncomment if debuging with pprof
+		// cfg := getAppConfig(log)
+
+		cfg := NewAppConfig()  // This will initialize the logger and other defaults
+        cfg.InitConfig() // Initializes configuration
 
 		// Execute the main function
-		execute(cmd, args)
+		cfg.Execute(cmd, args)
 	},
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().IntVarP(&maxConcurrentConnections, "max-connections", "c", 0, `(Optional) Controls how many parts of the 
+	cfg := NewAppConfig()
+	cobra.OnInitialize(cfg.InitConfig)
+	rootCmd.PersistentFlags().IntVarP(&cfg.maxConcurrentConnections, "max-connections", "c", 0, `(Optional) Controls how many parts of the 
 file are downloaded at the same time. You can set a specific number, 
 or if you set it to 0, it will choose the maximum concurrenct connections,
 equal to the number of chunk parts to split the file.`)
-	rootCmd.PersistentFlags().StringVarP(&shaSumsURL, 	"sha-sums", 	 	"s", "", `(Optional) The URL of the file containing the hashes refers to a file 
+	rootCmd.PersistentFlags().StringVarP(&cfg.shaSumsURL, 	"sha-sums", 	 	"s", "", `(Optional) The URL of the file containing the hashes refers to a file 
 with either MD5 or SHA-256 hashes, used to verify the integrity and 
 authenticity of the downloaded file.`)
-	rootCmd.PersistentFlags().StringVarP(&urlFile, 		"url", 			 	 "u", "",		"(Required) URL of the file to download")
-	rootCmd.PersistentFlags().IntVarP(&numParts, 		"num-parts", 	 	 "n", 2, 	 	"(Optional) Number of parts to split the download into. Default value is 2")
-	rootCmd.PersistentFlags().StringVarP(&partsDir, 	"parts-dir", 	  	 "p", "", 	 	"(Optional) The directory to save the parts files")
-	rootCmd.PersistentFlags().StringVarP(&prefixParts, 	"prefix-parts", 	 "x", "output", "(Optional) The prefix to use for naming the parts files")
-	rootCmd.PersistentFlags().StringVarP(&proxy, 		"proxy", 		 	 "r", "", 	 	"(Optional) Proxy to use for the download")
-	rootCmd.PersistentFlags().BoolVarP(&keepParts, 		"keep-parts", 	 	 "k", false, 	"(Optional) Whether to keep the parts files after assembly")
-	rootCmd.PersistentFlags().BoolVarP(&decryptManifest, "decrypt-manifest", "f", false, 	"(Optional) If true, decrypts the manifest file")
-	rootCmd.PersistentFlags().StringVarP(&manifestFile, "manifest-file", 	 "m", "", 	 	"(Required by --assemble-only) Manifest file (must be decrypted) to pass to the main function")
-    rootCmd.PersistentFlags().BoolVarP(&downloadOnly, 	"download-only", 	 "d", false, 	"(Optional) Download part files only if true")
-    rootCmd.PersistentFlags().BoolVarP(&assembleOnly, 	"assemble-only", 	 "a", false, 	"(Optional) Assemble part files only if true and --parts-dir and --manifest flags are passed")
-    rootCmd.PersistentFlags().StringVarP(&outputFile, 	"output",		 	 "o", "", 		"(Optional) Name and location of the final output file")
-	rootCmd.PersistentFlags().BoolVarP(&verbose,		"verbose", 		 	 "v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
+	rootCmd.PersistentFlags().StringVarP(&cfg.urlFile, 		"url", 			 	 "u", "",		"(Required) URL of the file to download")
+	rootCmd.PersistentFlags().IntVarP(&cfg.numParts, 		"num-parts", 	 	 "n", 2, 	 	"(Optional) Number of parts to split the download into. Default value is 2")
+	rootCmd.PersistentFlags().StringVarP(&cfg.partsDir, 	"parts-dir", 	  	 "p", "", 	 	"(Optional) The directory to save the parts files")
+	rootCmd.PersistentFlags().StringVarP(&cfg.prefixParts, 	"prefix-parts", 	 "x", "output", "(Optional) The prefix to use for naming the parts files")
+	rootCmd.PersistentFlags().StringVarP(&cfg.proxy, 		"proxy", 		 	 "r", "", 	 	"(Optional) Proxy to use for the download")
+	rootCmd.PersistentFlags().BoolVarP(&cfg.keepParts, 		"keep-parts", 	 	 "k", false, 	"(Optional) Whether to keep the parts files after assembly")
+	rootCmd.PersistentFlags().BoolVarP(&cfg.decryptManifest, "decrypt-manifest", "f", false, 	"(Optional) If true, decrypt the manifest file")
+	rootCmd.PersistentFlags().StringVarP(&cfg.manifestFile, "manifest-file", 	 "m", "", 	 	"(Required by --assemble-only) Manifest file (must be decrypted) to pass to the main function")
+    rootCmd.PersistentFlags().BoolVarP(&cfg.downloadOnly, 	"download-only", 	 "d", false, 	"(Optional) Download part files only if true")
+    rootCmd.PersistentFlags().BoolVarP(&cfg.assembleOnly, 	"assemble-only", 	 "a", false, 	"(Optional) Assemble part files only if true and --parts-dir and --manifest flags are passed")
+    rootCmd.PersistentFlags().StringVarP(&cfg.outputFile, 	"output",		 	 "o", "", 		"(Optional) Name and location of the final output file")
+	rootCmd.PersistentFlags().BoolVarP(&cfg.verbose,		"verbose", 		 	 "v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
 only output INFO logging.`)
-	rootCmd.PersistentFlags().BoolVarP(&enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
+	rootCmd.PersistentFlags().BoolVarP(&cfg.enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
 
-	bindFlagToViper("max-connections")
-	bindFlagToViper("sha-sums")
-	bindFlagToViper("url")
-	bindFlagToViper("num-parts")
-	bindFlagToViper("parts-dir")
-	bindFlagToViper("prefix-parts")
-	bindFlagToViper("proxy")
-	bindFlagToViper("keep-parts")
-	bindFlagToViper("decrypt-manifest")
-	bindFlagToViper("manifest-file")
-    bindFlagToViper("download-only")
-    bindFlagToViper("assemble-only")
-    bindFlagToViper("output")
-	bindFlagToViper("verbose")
-	bindFlagToViper("enable-pprof") // Uncomment if debuging with pprof
+	cfg.BindFlagToViper("max-connections", cfg.log)
+	cfg.BindFlagToViper("sha-sums", cfg.log)
+	cfg.BindFlagToViper("url", cfg.log)
+	cfg.BindFlagToViper("num-parts", cfg.log)
+	cfg.BindFlagToViper("parts-dir", cfg.log)
+	cfg.BindFlagToViper("prefix-parts", cfg.log)
+	cfg.BindFlagToViper("proxy", cfg.log)
+	cfg.BindFlagToViper("keep-parts", cfg.log)
+	cfg.BindFlagToViper("decrypt-manifest", cfg.log)
+	cfg.BindFlagToViper("manifest-file", cfg.log)
+    cfg.BindFlagToViper("download-only", cfg.log)
+    cfg.BindFlagToViper("assemble-only", cfg.log)
+    cfg.BindFlagToViper("output", cfg.log)
+	cfg.BindFlagToViper("verbose", cfg.log)
+	cfg.BindFlagToViper("enable-pprof", cfg.log) // Uncomment if debuging with pprof
 }
 
-func initConfig() {
+func (cfg *AppConfig) InitConfig() {
 	viper.AutomaticEnv() // read in environment variables that match
 }
 
-func bindFlagToViper(flagName string) {
+func (cfg *AppConfig) BindFlagToViper(flagName string, log logger.LoggerInterface) {
 	err := viper.BindPFlag(flagName, rootCmd.PersistentFlags().Lookup(flagName))
 	if err != nil {
 		log.Fatalf("Error binding flag %s to viper: %v", flagName, err)
 	}
 }
 
-func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string, log logger.LoggerInterface){
+func NewAppConfig() *AppConfig {
+	log := logger.InitLogger(false)
+	cfg := &AppConfig{
+		maxConcurrentConnections: viper.GetInt("max-connections"),
+		shaSumsURL 				: viper.GetString("sha-sums"),
+		urlFile 				: viper.GetString("url"),
+		numParts 				: viper.GetInt("num-parts"),
+		verbose 				: viper.GetBool("verbose"),
+		manifestFile 			: viper.GetString("manifest-file"),
+		decryptManifest 		: viper.GetBool("decrypt-manifest"),
+        downloadOnly 			: viper.GetBool("download-only"),
+        assembleOnly 			: viper.GetBool("assemble-only"),
+        outputFile 	 			: viper.GetString("output"),
+		partsDir 	 			: viper.GetString("parts-dir"),
+		prefixParts	 			: viper.GetString("prefix-parts"),
+		proxy 		 			: viper.GetString("proxy"),
+		keepParts 	 			: viper.GetBool("keep-parts"),
+		enablePprof  			: viper.GetBool("enable-pprof"), // Uncomment if debuging with pprof
+		log 					: log,
+	}
+	return cfg
+}
+
+func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string, log logger.LoggerInterface, cfg *AppConfig){
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
-	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
+	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, cfg.proxy, log)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(partsDir, prefixParts, log)
 	h := hasher.NewHasher(partsDir, prefixParts, log)
@@ -131,34 +152,34 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		log.Fatalf("Failed to validate current app root: %w", err)
 	}
 
-	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
+	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, cfg.downloadOnly, outputFile)
 	if err != nil {
 		log.Fatalf("Failed to download the part files:%w", err)
 	}
 
 	// Decrypt the downloaded manifest
-	decryptedContent, err = e.DecryptFile(manifestPath + ".enc", key, false)
+	cfg.decryptedContent, err = e.DecryptFile(manifestPath + ".enc", key, false)
 	if err != nil {
 		log.Fatalf("Decrypting manifest file: %w", err)
 	}
 
 	if keepParts {
 		// Dump the decrypted content to a JSON file
-		err = os.WriteFile(manifestPath, decryptedContent, 0644)
+		err = os.WriteFile(manifestPath, cfg.decryptedContent, 0644)
 		if err != nil {
 			log.Fatalf("Writing decrypted content to JSON file: %w", err)
 		}
 	}
 
-	manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, decryptedContent)
+	manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, cfg.decryptedContent)
 	if err != nil {
 		log.Fatalf("Failed to prepare assembly environment: %w", err)
 	}
 	defer outFile.Close() // Close the file after the function returns
 
 	// Clean memory after decoding content
-	u.ZeroMemory(decryptedContent)
-	decryptedContent = nil
+	u.ZeroMemory(cfg.decryptedContent)
+	cfg.decryptedContent = nil
 
 	// Assemble the file from the downloaded parts
 	err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{})
@@ -176,7 +197,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	h.ValidateFileIntegrity(outputPath, hashType, etag, hash, ok)
 }
 
-func execute(cmd *cobra.Command, args []string) {
+func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 	// Ticket: Logger Initialization Placement 
 	// Package Name: main
 	// Function Name: execute
@@ -184,14 +205,14 @@ func execute(cmd *cobra.Command, args []string) {
 	// This has been noted and might be considered for a refactor to initialize at the 
 	// package or main function level in the future. Doing so would make it available 
 	// for all functions and scenarios. Current initialization is scoped to this function.
-	log := logger.InitLogger(verbose) // Keep track of returned logger
+	log := logger.InitLogger(cfg.verbose) // Keep track of returned logger
     log.Debugw("Logger initialized")
 
-	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
-	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, proxy, log)
-	e := encryption.NewEncryption(partsDir, prefixParts, log)
-	f := fileutils.NewFileutils(partsDir, prefixParts, log)
-	h := hasher.NewHasher(partsDir, prefixParts, log)
+	a := assembler.NewAssembler(cfg.numParts, cfg.partsDir, cfg.keepParts, cfg.prefixParts, log)
+	d := downloader.NewDownloader(cfg.urlFile, cfg.numParts, cfg.maxConcurrentConnections, cfg.partsDir, cfg.prefixParts, cfg.proxy, log)
+	e := encryption.NewEncryption(cfg.partsDir, cfg.prefixParts, log)
+	f := fileutils.NewFileutils(cfg.partsDir, cfg.prefixParts, log)
+	h := hasher.NewHasher(cfg.partsDir, cfg.prefixParts, log)
 	p := pprofutils.NewPprofUtils(log, port) // Uncomment if debuging with pprof
 
 	// Process the partsDir value
@@ -199,18 +220,18 @@ func execute(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Failed to create parts directory: %w", err)
 	}
-	if partsDir == "" {
-		partsDir = f.PartsDir
+	if cfg.partsDir == "" {
+		cfg.partsDir = f.PartsDir
 		a.PartsDir = f.PartsDir
 		d.PartsDir = f.PartsDir
 		e.PartsDir = f.PartsDir
 	}
 
 	// Conditionally start pprof if the flag is set
-    if enablePprof {
+    if cfg.enablePprof {
 		log.Debugw(
 			"Starting pprof server...",
-			"enablePprof", enablePprof,
+			"enablePprof", cfg.enablePprof,
 		)
         p.StartPprof()
     } // Uncomment if debuging with pprof
@@ -224,16 +245,16 @@ func execute(cmd *cobra.Command, args []string) {
 		}
 	}() // Uncomment if debuging with pprof
 
-	if decryptManifest {
+	if cfg.decryptManifest {
 		log.Debugw("Decrypting manifest file", 
-			"partsDir", partsDir, 
-			"manifestFile", manifestFile,
+			"partsDir", cfg.partsDir, 
+			"manifestFile", cfg.manifestFile,
 		)
-        if partsDir == "" || manifestFile == "" {
+        if cfg.partsDir == "" || cfg.manifestFile == "" {
             log.Fatalw("Error: --decrypt-manifest requires --parts-dir and --manifest-file")
         }
 
-		partFilesHashes, err := h.HashesFromFiles(partsDir, prefixParts, "sha256")
+		partFilesHashes, err := h.HashesFromFiles(cfg.partsDir, cfg.prefixParts, "sha256")
 		if err != nil {
 			log.Fatalf("Failed to search for files in the current directory: %w", err)
 		}
@@ -245,27 +266,27 @@ func execute(cmd *cobra.Command, args []string) {
 		}
 
         // Decrypt the downloaded manifest
-        _, err = e.DecryptFile(manifestFile, key, true)
+        _, err = e.DecryptFile(cfg.manifestFile, key, true)
         if err != nil {
             log.Fatalf("Failed to decrypt manifest file: %w", err)
         }
 
-    } else if assembleOnly {
-		if manifestFile == "" || partsDir == "" {
+    } else if cfg.assembleOnly {
+		if cfg.manifestFile == "" || cfg.partsDir == "" {
 			log.Fatalw("Error: --assemble-only requires --parts-dir and --manifest")
 		}
 		size := 0
 		rangeSize := 0
 	
 		// Initialize the manifest
-		if f.PathExists(manifestFile) {
+		if f.PathExists(cfg.manifestFile) {
 			// Load file from disk
-			manifestContent, err := os.ReadFile(manifestFile)
+			manifestContent, err := os.ReadFile(cfg.manifestFile)
 			if err != nil {
 				log.Fatalf("Failed to load manifest file: %w", err)
 			}
 
-			manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(outputFile, manifestContent)
+			manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(cfg.outputFile, manifestContent)
 			if err != nil {
 				log.Fatalf("Failed to prepare assembly environment: %w", err)
 			}
@@ -284,19 +305,19 @@ func execute(cmd *cobra.Command, args []string) {
 		} else {
 			log.Fatalw("Error: manifest file not found")
 		}
-	} else if downloadOnly {
-		_, _, _, _, _, _, _, _, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
+	} else if cfg.downloadOnly {
+		_, _, _, _, _, _, _, _, err := d.Download(cfg.shaSumsURL, cfg.partsDir, cfg.prefixParts, cfg.urlFile, cfg.downloadOnly, cfg.outputFile)
 		if err != nil {
 			log.Fatalf("Failed to download the part files: %w", err)
 		}
 	} else {
-		if urlFile == "" {
+		if cfg.urlFile == "" {
 			log.Fatalw("Error: the --url flag is required")
 		}
-		run(maxConcurrentConnections, shaSumsURL, urlFile, numParts, partsDir, keepParts, prefixParts, outputFile, log)
+		run(cfg.maxConcurrentConnections, cfg.shaSumsURL, cfg.urlFile, cfg.numParts, cfg.partsDir, cfg.keepParts, cfg.prefixParts, cfg.outputFile, cfg.log, cfg)
 	}
 
-	if enablePprof {
+	if cfg.enablePprof {
 		err := p.DumpDebugPProf()
 		if err != nil {
 			log.Fatalf("Error starting pprof server: %w", err)
@@ -305,6 +326,7 @@ func execute(cmd *cobra.Command, args []string) {
 }
 
 func main() {
+	log := logger.InitLogger(false)
 	// calls the Execute method on the rootCmd object, which is likely an instance of
 	// a Cobra command. The Execute method runs the CLI, parsing the command-line 
 	// arguments and running the appropriate subcommands or functions as defined in 
