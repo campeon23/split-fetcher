@@ -192,7 +192,7 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 		log.Fatalf("Failed to remove parts or directory: %w", err)
 	}
 
-	hash, ok := hashes[manifest.Filename] // This should be in the same method or function as the switch statement.
+	hash, ok := hashes[manifest.Filename]
 
 	h.ValidateFileIntegrity(outputPath, hashType, etag, hash, ok)
 }
