@@ -134,7 +134,10 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	h := hasher.NewHasher(partsDir, prefixParts, log)
 	u := utils.NewUtils(partsDir, log)
 
-	appRoot, _ := f.EnsureAppRoot()
+	appRoot, err := f.EnsureAppRoot()
+	if err != nil {
+		log.Fatalf("Failed to validate current app root: %w", err)
+	}
 
 	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(shaSumsURL, partsDir, prefixParts, urlFile, downloadOnly, outputFile)
 	if err != nil {
