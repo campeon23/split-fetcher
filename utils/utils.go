@@ -131,3 +131,8 @@ func (u *Utils) SanitizePath(path string) string {
     }
     return cleanedPath
 }
+// Method to zero out the memory of a byte slice, to prevent the sensitive data from lingering in memory
+func (u *Utils) ZeroMemory(data []byte) {
+    zero := make([]byte, len(data))
+    copy(data, zero)
+}

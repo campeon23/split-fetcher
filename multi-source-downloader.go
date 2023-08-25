@@ -165,10 +165,8 @@ func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numPar
 	defer outFile.Close() // Close the file after the function returns
 
 	// Clean memory after decoding content
+	u.ZeroMemory(decryptedContent)
 	decryptedContent = nil
-	for i := range decryptedContent {
-		decryptedContent[i] = 0
-	}
 
 	// Assemble the file from the downloaded parts
 	err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{})
