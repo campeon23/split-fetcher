@@ -52,4 +52,7 @@ bak.*
 # Go workspace file
 go.work
 
+# Config directories
+*/config/
+
 dist/

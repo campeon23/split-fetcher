@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	_ "net/http/pprof"
 	"net/url"
 	"os"
@@ -14,18 +15,12 @@ import (
 	"time"
 
 	"github.com/gocolly/colly"
+	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
 
 	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/campeon23/multi-source-downloader/utils"
-)
-
-const (
-	port = ":6060"
-	certPath = "./certs/pprof_cert.pem"
-	keyPath = "./certs/pprof_key.pem"
-	baseURL = "https://localhost" + port + "/debug/pprof/" // Assuming you're running the pprof locally
 )
 
 type Server interface {
@@ -34,16 +29,85 @@ type Server interface {
 }
  
 type PprofUtils struct {
-	Log		logger.LoggerInterface
-	ErrCh 	chan error // shared error channel
-	Server 	Server
-	Addr 	string
-	wg      sync.WaitGroup
-	errChMu sync.Mutex // Add a mutex for synchronizing error channel writes
+	Log			logger.LoggerInterface
+	ErrCh 		chan error // shared error channel
+	Server 		Server
+	SecretToken string
+	PprofPort 	string
+	CertPath 	string
+	KeyPath 	string
+	BaseURL		string
+	EnablePprof	bool
+	// router 		*mux.Router
+	wg      	sync.WaitGroup
+	errChMu 	sync.Mutex // Add a mutex for synchronizing error channel writes
+}
+
+func NewPprofUtils(enablePprof bool, pprofPort string, secretToken string, certPath string, keyPath string, baseURL string, log logger.LoggerInterface, errCh chan error) *PprofUtils {
+	return &PprofUtils{
+		SecretToken:	secretToken,
+		PprofPort:		pprofPort,
+		CertPath:		certPath,
+		KeyPath:		keyPath,
+		BaseURL:		baseURL,
+		EnablePprof:	enablePprof,
+		// router :		mux.NewRouter(),
+		Server: &http.Server{
+			Addr: pprofPort,
+			// Handler: router,
+		},
+		Log: log,
+		ErrCh: 			errCh, // Initialize error channel
+	}
 }
 
 func (p *PprofUtils) SetLogger(log logger.LoggerInterface) {
     p.Log = log
+}
+
+func LoadConfig() error {
+    viper.SetConfigName("config") // Name of config file (without extension)
+    viper.AddConfigPath("./pprofutils/config") // Path to look for the config file in
+
+    err := viper.ReadInConfig() // Find and read the config file
+    if err != nil { // Handle errors reading the config file
+        return fmt.Errorf("fatal error config file: %w", err)
+    }
+	return nil
+}
+
+// Add middleware for pprof routes authentication
+func (p *PprofUtils) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check for a specific header, or use any other authentication method you prefer
+		if r.Header.Get("X-DEBUG-TOKEN") != p.SecretToken {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// This function sets up the pprof routes
+func (p *PprofUtils) initializePprofRoutes(r *mux.Router) {
+	// Register pprof root route without middleware
+    r.HandleFunc("/debug/pprof/", pprof.Index)
+	// Create subrouter for pprof with auth middleware
+	pprofRouter := r.PathPrefix("/debug/pprof/").Subrouter()
+    pprofRouter.HandleFunc("/", pprof.Index)
+	// Register pprof routes with auth middleware
+	pprofRouter.HandleFunc("/allocs", pprof.Handler("allocs").ServeHTTP)
+	pprofRouter.HandleFunc("/block", pprof.Handler("block").ServeHTTP)
+    pprofRouter.HandleFunc("/cmdline", pprof.Cmdline)
+	pprofRouter.HandleFunc("/goroutine", pprof.Handler("goroutine").ServeHTTP)
+	pprofRouter.HandleFunc("/heap", pprof.Handler("heap").ServeHTTP)
+	pprofRouter.HandleFunc("/mutex", pprof.Handler("mutex").ServeHTTP)
+    pprofRouter.HandleFunc("/profile", pprof.Profile)
+	pprofRouter.HandleFunc("/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+    pprofRouter.HandleFunc("/symbol", pprof.Symbol)
+    pprofRouter.HandleFunc("/trace", pprof.Trace)
+	// Add auth middleware to all pprof routes
+	pprofRouter.Use(p.authMiddleware)
 }
 
 type KeyPressReader interface {
@@ -65,17 +129,6 @@ func (p *PprofUtils) writeToErrCh(err error) {
 	select {
 	case p.ErrCh <- err:
 	default:
-	}
-}
-
-func NewPprofUtils(log logger.LoggerInterface, addr string) *PprofUtils {
-	return &PprofUtils{
-		Log: log,
-		ErrCh: make(chan error, 1), // Initialize error channel
-		Server: &http.Server{
-			Addr: addr,
-		},
-		Addr: addr,
 	}
 }
 
@@ -134,13 +187,26 @@ func (p *PprofUtils) StartServerWithShutdown(addr string, certPath string, keyPa
 func (p *PprofUtils) StartPprof() chan error {
 	p.wg.Add(1)
 
-	p.Log.Infow("Starting pprof server", "port", port)
+	p.Log.Debugw("Starting pprof server", "port", p.PprofPort)
 
 	go func() {
+		defer func() {
+		if r := recover(); r != nil {
+				fmt.Println("Recovered from panic:", r)
+			}
+		}()
 		defer p.wg.Done()
+
+		router := mux.NewRouter() // Create the router
+		p.initializePprofRoutes(router) // Initialize pprof routes
+
+		p.Server = &http.Server{
+			Addr:    p.PprofPort,
+			Handler: router,
+		}
 		
 		// Start the HTTP server with graceful shutdown using TLS
-		 serverErrCh := p.StartServerWithShutdown(port, certPath, keyPath, &RealKeyPressReader{})
+		serverErrCh := p.StartServerWithShutdown(p.PprofPort, p.CertPath, p.KeyPath, &RealKeyPressReader{})
 		// If server encounters error, pass it to our errCh
 		select {
 		case err := <-serverErrCh:
@@ -192,10 +258,21 @@ func (p *PprofUtils) DumpDebugPProf() error {
 	// Callback when a visited link is found
 	c.OnHTML("a[href]", func(t *colly.HTMLElement) {
 		link := t.Attr("href")
-		// Send GET request to the link with query parameter
-		resp, err := http.DefaultClient.Get(baseURL + link)
+
+		// Create a new request using http
+		req, err := http.NewRequest("GET", p.BaseURL+link, nil)
 		if err != nil {
-			p.Log.Errorf("failed querying %s: %v", baseURL, err)
+			p.Log.Errorf("failed to create a new request: %v", err)
+			return
+		}
+
+		// Add custom headers to the request
+		req.Header.Add("X-DEBUG-TOKEN", p.SecretToken) // replace YOUR_TOKEN_HERE with the actual token
+
+		// Use http.DefaultClient to send the request
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			p.Log.Errorf("failed querying %s: %v", p.BaseURL, err)
 			return
 		}
 		defer resp.Body.Close()
@@ -223,11 +300,12 @@ func (p *PprofUtils) DumpDebugPProf() error {
 
 		// Check if the content type is binary
 		switch contentType {
-		case "application/octet-stream":
-			p.Log.Debugf("Warning: Saving binary profile data for %s", link)
-		case "text/plain":
-		default:
-			p.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
+			case "application/octet-stream":
+				p.Log.Debugf("Warning: Saving binary profile data for %s", link)
+			case "text/plain; charset=utf-8":
+				p.Log.Debugf("Warning: Saving text/plain profile data for %s", link)
+			default:
+				p.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
 		}
 
 		resource, dumpType, value, err := u.ParseLink(link)
@@ -248,13 +326,11 @@ func (p *PprofUtils) DumpDebugPProf() error {
 		p.Log.Debugw(
 			"Wrote file to debug directory",
 			"file", dumpName,
-			"baseURL", baseURL,
-			"response", resp,
 		)
 	})
-	err = c.Visit(baseURL)
+	err = c.Visit(p.BaseURL)
 	if err != nil {
-		return fmt.Errorf("error visiting %s: %v", baseURL, err)
+		return fmt.Errorf("error visiting %s: %v", p.BaseURL, err)
 	}
 	return nil
 }
