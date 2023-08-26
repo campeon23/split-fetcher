@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -16,9 +17,7 @@ import (
 	"github.com/campeon23/multi-source-downloader/utils"
 )
 
-const ( 
-	port = ":6060"
-)
+var errCh = make(chan error, 2)
 
 type AppConfig struct {
 	maxConcurrentConnections 	int
@@ -35,13 +34,20 @@ type AppConfig struct {
     assembleOnly 				bool
     outputFile 					string
 	verbose 					bool
-	enablePprof 				bool // Uncomment if debuging with pprof
 	decryptedContent 			[]byte
 	log 						logger.LoggerInterface
 	BindFlagsToViper 			func(string, logger.LoggerInterface)
 }
 
-var log = logger.InitLogger(false)
+type PprofConfig struct {
+	enablePprof 				bool // Uncomment if debuging with pprof
+	secretToken 				string
+	pprofPort 					string
+	certPath					string
+	keyPath						string
+	baseURL						string
+	log 						logger.LoggerInterface
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "multi-source-downloader",
@@ -53,19 +59,35 @@ It then assembles the final file, with support for either Etag validation or Has
 validation, to ensure file integrity. And more things...`,
 	Run:   func(cmd *cobra.Command, args []string) {
 		// Retrieve the values of your flags
-		// cfg := getAppConfig(log)
+		ppcfg := NewPprofConfig()  // This will initialize the pprof and other defaults
+        ppcfg.InitConfig() // Initializes configuration
 
 		cfg := NewAppConfig()  // This will initialize the logger and other defaults
         cfg.InitConfig() // Initializes configuration
 
+		// Execute the pprof server
+		if ppcfg.enablePprof {
+			ppcfg.Execute(cmd, args)
+		}
+
 		// Execute the main function
 		cfg.Execute(cmd, args)
+
+		// Dump debug information
+		if ppcfg.enablePprof {
+			p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh) // Uncomment if debuging with pprof
+			ppcfg.DumpDebugFinalize(p)
+		}
 	},
 }
 
 func init() {
 	cfg := NewAppConfig()
+	ppcfg := NewPprofConfig()
+	err := pprofutils.LoadConfig()
+	if err != nil { cfg.log.Fatalf("Error loading config: %w", err)}
 	cobra.OnInitialize(cfg.InitConfig)
+	cobra.OnInitialize(ppcfg.InitConfig)
 	rootCmd.PersistentFlags().IntVarP(&cfg.maxConcurrentConnections, "max-connections", "c", 0, `(Optional) Controls how many parts of the 
 file are downloaded at the same time. You can set a specific number, 
 or if you set it to 0, it will choose the maximum concurrenct connections,
@@ -86,7 +108,7 @@ authenticity of the downloaded file.`)
     rootCmd.PersistentFlags().StringVarP(&cfg.outputFile, 	"output",		 	 "o", "", 		"(Optional) Name and location of the final output file")
 	rootCmd.PersistentFlags().BoolVarP(&cfg.verbose,		"verbose", 		 	 "v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
 only output INFO logging.`)
-	rootCmd.PersistentFlags().BoolVarP(&cfg.enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling") // Uncomment if debuging with pprof
+	rootCmd.PersistentFlags().BoolVarP(&ppcfg.enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling. This parameter will only work, if a pprof configuration file exits.") // Uncomment if debuging with pprof
 
 	cfg.BindFlagToViper("max-connections", cfg.log)
 	cfg.BindFlagToViper("sha-sums", cfg.log)
@@ -102,7 +124,7 @@ only output INFO logging.`)
     cfg.BindFlagToViper("assemble-only", cfg.log)
     cfg.BindFlagToViper("output", cfg.log)
 	cfg.BindFlagToViper("verbose", cfg.log)
-	cfg.BindFlagToViper("enable-pprof", cfg.log) // Uncomment if debuging with pprof
+	ppcfg.BindFlagToViper("enable-pprof", ppcfg.log) // Uncomment if debuging with pprof
 }
 
 func (cfg *AppConfig) InitConfig() {
@@ -110,6 +132,13 @@ func (cfg *AppConfig) InitConfig() {
 }
 
 func (cfg *AppConfig) BindFlagToViper(flagName string, log logger.LoggerInterface) {
+	err := viper.BindPFlag(flagName, rootCmd.PersistentFlags().Lookup(flagName))
+	if err != nil {
+		log.Fatalf("Error binding flag %s to viper: %v", flagName, err)
+	}
+}
+
+func (ppcfg *PprofConfig) BindFlagToViper(flagName string, log logger.LoggerInterface) {
 	err := viper.BindPFlag(flagName, rootCmd.PersistentFlags().Lookup(flagName))
 	if err != nil {
 		log.Fatalf("Error binding flag %s to viper: %v", flagName, err)
@@ -132,15 +161,31 @@ func NewAppConfig() *AppConfig {
 		prefixParts	 			: viper.GetString("prefix-parts"),
 		proxy 		 			: viper.GetString("proxy"),
 		keepParts 	 			: viper.GetBool("keep-parts"),
-		enablePprof  			: viper.GetBool("enable-pprof"), // Uncomment if debuging with pprof
-		log 					: log,
+		log 					: logger.InitLogger(viper.GetBool("verbose")),
 	}
 	return cfg
 }
 
+func (ppcfg *PprofConfig) InitConfig() {
+	viper.AutomaticEnv() // read in environment variables that match
+}
+
+func NewPprofConfig() *PprofConfig {
+	ppcfg := &PprofConfig{
+		enablePprof  			: viper.GetBool("enable-pprof"), // Uncomment if debuging with pprof
+		secretToken 			: viper.GetString("SECRET_TOKEN"),
+    	pprofPort 				: viper.GetString("PPROF_PORT"),
+		certPath				: viper.GetString("CERT_PATH"),
+		keyPath					: viper.GetString("KEY_PATH"),
+		baseURL					: viper.GetString("BASE_URL"),
+		log 					: logger.InitLogger(viper.GetBool("verbose")),
+	}
+	return ppcfg
+}
+
 func run(maxConcurrentConnections int, shaSumsURL string, urlFile string, numParts int, partsDir string, keepParts bool, prefixParts string, outputFile string, log logger.LoggerInterface, cfg *AppConfig){
 	a := assembler.NewAssembler(numParts, partsDir, keepParts, prefixParts, log)
-	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, cfg.proxy, log)
+	d := downloader.NewDownloader(urlFile, numParts, maxConcurrentConnections, partsDir, prefixParts, cfg.proxy, log, errCh)
 	e := encryption.NewEncryption(partsDir, prefixParts, log)
 	f := fileutils.NewFileutils(partsDir, prefixParts, log)
 	h := hasher.NewHasher(partsDir, prefixParts, log)
@@ -204,20 +249,18 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 	// This has been noted and might be considered for a refactor to initialize at the 
 	// package or main function level in the future. Doing so would make it available 
 	// for all functions and scenarios. Current initialization is scoped to this function.
-	log := logger.InitLogger(cfg.verbose) // Keep track of returned logger
-    log.Debugw("Logger initialized")
+    cfg.log.Debugw("Logger initialized")
 
-	a := assembler.NewAssembler(cfg.numParts, cfg.partsDir, cfg.keepParts, cfg.prefixParts, log)
-	d := downloader.NewDownloader(cfg.urlFile, cfg.numParts, cfg.maxConcurrentConnections, cfg.partsDir, cfg.prefixParts, cfg.proxy, log)
-	e := encryption.NewEncryption(cfg.partsDir, cfg.prefixParts, log)
-	f := fileutils.NewFileutils(cfg.partsDir, cfg.prefixParts, log)
-	h := hasher.NewHasher(cfg.partsDir, cfg.prefixParts, log)
-	p := pprofutils.NewPprofUtils(log, port) // Uncomment if debuging with pprof
+	a := assembler.NewAssembler(cfg.numParts, cfg.partsDir, cfg.keepParts, cfg.prefixParts, cfg.log)
+	d := downloader.NewDownloader(cfg.urlFile, cfg.numParts, cfg.maxConcurrentConnections, cfg.partsDir, cfg.prefixParts, cfg.proxy, cfg.log, errCh)
+	e := encryption.NewEncryption(cfg.partsDir, cfg.prefixParts, cfg.log)
+	f := fileutils.NewFileutils(cfg.partsDir, cfg.prefixParts, cfg.log)
+	h := hasher.NewHasher(cfg.partsDir, cfg.prefixParts, cfg.log)
 
 	// Process the partsDir value
 	err := f.ProcessPartsDir()
 	if err != nil {
-		log.Fatalf("Failed to create parts directory: %w", err)
+		cfg.log.Fatalf("Failed to create parts directory: %w", err)
 	}
 	if cfg.partsDir == "" {
 		cfg.partsDir = f.PartsDir
@@ -226,53 +269,35 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 		e.PartsDir = f.PartsDir
 	}
 
-	// Conditionally start pprof if the flag is set
-    if cfg.enablePprof {
-		log.Debugw(
-			"Starting pprof server...",
-			"enablePprof", cfg.enablePprof,
-		)
-        p.StartPprof()
-    } // Uncomment if debuging with pprof
-
-	// Listen to errors
-	go func() {
-		for err := range p.GetErrorChannel() {
-			if err != nil {
-				log.Printf("Received an error on pprof error channel: %w", err)
-			}
-		}
-	}() // Uncomment if debuging with pprof
-
 	if cfg.decryptManifest {
-		log.Debugw("Decrypting manifest file", 
+		cfg.log.Debugw("Decrypting manifest file", 
 			"partsDir", cfg.partsDir, 
 			"manifestFile", cfg.manifestFile,
 		)
         if cfg.partsDir == "" || cfg.manifestFile == "" {
-            log.Fatalw("Error: --decrypt-manifest requires --parts-dir and --manifest-file")
+            cfg.log.Fatalw("Error: --decrypt-manifest requires --parts-dir and --manifest-file")
         }
 
 		partFilesHashes, err := h.HashesFromFiles(cfg.partsDir, cfg.prefixParts, "sha256")
 		if err != nil {
-			log.Fatalf("Failed to search for files in the current directory: %w", err)
+			cfg.log.Fatalf("Failed to search for files in the current directory: %w", err)
 		}
 						
 		// Obtain the encryption key
 		key, err := e.CreateEncryptionKey(partFilesHashes)
 		if err != nil {
-			log.Fatalf("Failed to create encryption key: %w", err)
+			cfg.log.Fatalf("Failed to create encryption key: %w", err)
 		}
 
         // Decrypt the downloaded manifest
         _, err = e.DecryptFile(cfg.manifestFile, key, true)
         if err != nil {
-            log.Fatalf("Failed to decrypt manifest file: %w", err)
+            cfg.log.Fatalf("Failed to decrypt manifest file: %w", err)
         }
 
     } else if cfg.assembleOnly {
 		if cfg.manifestFile == "" || cfg.partsDir == "" {
-			log.Fatalw("Error: --assemble-only requires --parts-dir and --manifest")
+			cfg.log.Fatalw("Error: --assemble-only requires --parts-dir and --manifest")
 		}
 		size := 0
 		rangeSize := 0
@@ -287,13 +312,13 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 
 			manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(cfg.outputFile, manifestContent)
 			if err != nil {
-				log.Fatalf("Failed to prepare assembly environment: %w", err)
+				cfg.log.Fatalf("Failed to prepare assembly environment: %w", err)
 			}
 			defer outFile.Close() // Close the file after the function returns
 
 			err = a.AssembleFileFromParts(manifest, outFile, size, rangeSize, hasher.Hasher{}) // make sure to modify this method to receive and handle your manifest file
 			if err != nil {
-				log.Fatalf("Failed to assemble parts: %w", err)
+				cfg.log.Fatalf("Failed to assemble parts: %w", err)
 			}
 
 			hash := manifest.FileHash
@@ -302,26 +327,43 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 			// Validate the file integrity
 			h.ValidateFileIntegrity(outputPath, manifest.HashType, manifest.Etag, hash, ok)
 		} else {
-			log.Fatalw("Error: manifest file not found")
+			cfg.log.Fatalw("Error: manifest file not found")
 		}
 	} else if cfg.downloadOnly {
 		_, _, _, _, _, _, _, _, err := d.Download(cfg.shaSumsURL, cfg.partsDir, cfg.prefixParts, cfg.urlFile, cfg.downloadOnly, cfg.outputFile)
 		if err != nil {
-			log.Fatalf("Failed to download the part files: %w", err)
+			cfg.log.Fatalf("Failed to download the part files: %w", err)
 		}
 	} else {
 		if cfg.urlFile == "" {
-			log.Fatalw("Error: the --url flag is required")
+			cfg.log.Fatalw("Error: the --url flag is required")
 		}
 		run(cfg.maxConcurrentConnections, cfg.shaSumsURL, cfg.urlFile, cfg.numParts, cfg.partsDir, cfg.keepParts, cfg.prefixParts, cfg.outputFile, cfg.log, cfg)
 	}
+}
 
-	if cfg.enablePprof {
-		err := p.DumpDebugPProf()
-		if err != nil {
-			log.Fatalf("Error starting pprof server: %w", err)
+func (ppcfg *PprofConfig) Execute(cmd *cobra.Command, args []string) {
+	p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh) // Uncomment if debuging with pprof
+	// Conditionally start pprof if the flag is set
+    if ppcfg.enablePprof {
+        p.StartPprof()
+    }
+
+	// Listen to errors
+	go func() {
+		for err := range p.GetErrorChannel() {
+			if err != nil {
+				ppcfg.log.Printf("Received an error on pprof error channel: %w", err)
+			}
 		}
-	} // Uncomment if debuging with pprof
+	}()
+}
+
+func (ppcfg *PprofConfig) DumpDebugFinalize(p *pprofutils.PprofUtils) {
+	err := p.DumpDebugPProf()
+	if err != nil {
+		ppcfg.log.Fatalf("Error starting pprof server: %w", err)
+	}
 }
 
 func main() {
@@ -329,6 +371,7 @@ func main() {
 	// a Cobra command. The Execute method runs the CLI, parsing the command-line 
 	// arguments and running the appropriate subcommands or functions as defined in 
 	// the program.
+	var log = logger.InitLogger(false)
 	if err := rootCmd.Execute(); err != nil {
 		log.Printf("Error executing rootCmd object from Cobra command: %w", err)
 	}
