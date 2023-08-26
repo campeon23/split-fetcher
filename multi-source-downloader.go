@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -307,7 +306,7 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 			// Load file from disk
 			manifestContent, err := os.ReadFile(cfg.manifestFile)
 			if err != nil {
-				log.Fatalf("Failed to load manifest file: %w", err)
+				cfg.log.Fatalf("Failed to load manifest file: %w", err)
 			}
 
 			manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(cfg.outputFile, manifestContent)
