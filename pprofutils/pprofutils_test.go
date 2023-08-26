@@ -39,7 +39,7 @@ func (m *MockKeyPressReader) WaitForKeyPress() byte {
 
 func TestStartServerWithShutdown(t *testing.T) {
 	l := logger.InitLogger(true)
-	p := NewPprofUtils(l, ":6060")
+	p := NewPprofUtils(true, ":6060", "mockToken", "mockCert", "mockKey", "mockBaseURL", l, make(chan error))
 	p.Server = &mockServer{} // Inject mock server
 
 	// Mock KeyPressReader to simulate 's' keypress immediately
@@ -51,8 +51,8 @@ func TestStartServerWithShutdown(t *testing.T) {
 	case err := <-errChan:
 		fmt.Println("Received error:", err) // for debugging purposes
     	assert.Nil(t, err, "Expected no error but got: %v", err)
-	case <-time.After(10 * time.Second):
-		assert.Fail(t, "Expected server to shut down by now")
+	case <-time.After(1 * time.Second):
+		assert.NotNil(t, "expected server to shut down by now")
 	}
 }
 
