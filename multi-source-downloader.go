@@ -19,7 +19,7 @@ import (
 var errCh = make(chan error, 2)
 
 type AppConfig struct {
-	maxConcurrentConnections 	int
+	maxConcurrentConnections	int
 	shaSumsURL 					string
 	urlFile  					string
 	numParts 					int
@@ -39,12 +39,14 @@ type AppConfig struct {
 }
 
 type PprofConfig struct {
-	enablePprof 				bool // Uncomment if debuging with pprof
+	enablePprof 				bool 
 	secretToken 				string
 	pprofPort 					string
 	certPath					string
 	keyPath						string
 	baseURL						string
+	configName					string
+	configPath					string
 	log 						logger.LoggerInterface
 }
 
@@ -65,16 +67,18 @@ validation, to ensure file integrity. And more things...`,
         cfg.InitConfig() // Initializes configuration
 
 		// Execute the pprof server
-		if ppcfg.enablePprof {
+		if ppcfg.enablePprof && os.Getenv("ENV_MODE") == "development" {
 			ppcfg.Execute(cmd, args)
+		} else {
+			ppcfg.log.Debugw("Pprof server not started. ENV_MODE not in development mode.")
 		}
 
 		// Execute the main function
 		cfg.Execute(cmd, args)
 
 		// Dump debug information
-		if ppcfg.enablePprof {
-			p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh) // Uncomment if debuging with pprof
+		if ppcfg.enablePprof && os.Getenv("ENV_MODE") == "development" {
+			p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh)
 			ppcfg.DumpDebugFinalize(p)
 		}
 	},
@@ -83,8 +87,13 @@ validation, to ensure file integrity. And more things...`,
 func init() {
 	cfg := NewAppConfig()
 	ppcfg := NewPprofConfig()
-	err := pprofutils.LoadConfig()
-	if err != nil { cfg.log.Fatalf("Error loading config: %w", err)}
+	f := fileutils.NewFileutils(cfg.partsDir, cfg.prefixParts, cfg.log)
+	// Will run only in development mode
+	if os.Getenv("ENV_MODE") == "development" && f.PathExists(ppcfg.configPath) {
+		err := pprofutils.LoadConfig(ppcfg.configName, ppcfg.configPath)
+		if err != nil { cfg.log.Fatalf("Error loading config: %w", err)}
+	}
+
 	cobra.OnInitialize(cfg.InitConfig)
 	cobra.OnInitialize(ppcfg.InitConfig)
 	rootCmd.PersistentFlags().IntVarP(&cfg.maxConcurrentConnections, "max-connections", "c", 0, `(Optional) Controls how many parts of the 
@@ -107,8 +116,7 @@ authenticity of the downloaded file.`)
     rootCmd.PersistentFlags().StringVarP(&cfg.outputFile, 	"output",		 	 "o", "", 		"(Optional) Name and location of the final output file")
 	rootCmd.PersistentFlags().BoolVarP(&cfg.verbose,		"verbose", 		 	 "v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
 only output INFO logging.`)
-	rootCmd.PersistentFlags().BoolVarP(&ppcfg.enablePprof, 	"enable-pprof",  	 "e", false, 	"Enable pprof profiling. This parameter will only work, if a pprof configuration file exits.") // Uncomment if debuging with pprof
-
+	rootCmd.PersistentFlags().BoolVarP(&ppcfg.enablePprof, 	"enable-pprof",  "e", false, 	"Enable pprof profiling. This parameter will only work, if a pprof configuration file exits.")
 	cfg.BindFlagToViper("max-connections", cfg.log)
 	cfg.BindFlagToViper("sha-sums", cfg.log)
 	cfg.BindFlagToViper("url", cfg.log)
@@ -123,7 +131,7 @@ only output INFO logging.`)
     cfg.BindFlagToViper("assemble-only", cfg.log)
     cfg.BindFlagToViper("output", cfg.log)
 	cfg.BindFlagToViper("verbose", cfg.log)
-	ppcfg.BindFlagToViper("enable-pprof", ppcfg.log) // Uncomment if debuging with pprof
+	ppcfg.BindFlagToViper("enable-pprof", ppcfg.log)
 }
 
 func (cfg *AppConfig) InitConfig() {
@@ -171,12 +179,14 @@ func (ppcfg *PprofConfig) InitConfig() {
 
 func NewPprofConfig() *PprofConfig {
 	ppcfg := &PprofConfig{
-		enablePprof  			: viper.GetBool("enable-pprof"), // Uncomment if debuging with pprof
+		enablePprof  			: viper.GetBool("enable-pprof"),
 		secretToken 			: viper.GetString("SECRET_TOKEN"),
     	pprofPort 				: viper.GetString("PPROF_PORT"),
 		certPath				: viper.GetString("CERT_PATH"),
 		keyPath					: viper.GetString("KEY_PATH"),
 		baseURL					: viper.GetString("BASE_URL"),
+		configName				: "config",
+		configPath				: "./pprofutils/config",
 		log 					: logger.InitLogger(viper.GetBool("verbose")),
 	}
 	return ppcfg
@@ -342,9 +352,9 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 }
 
 func (ppcfg *PprofConfig) Execute(cmd *cobra.Command, args []string) {
-	p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh) // Uncomment if debuging with pprof
+	p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh)
 	// Conditionally start pprof if the flag is set
-    if ppcfg.enablePprof {
+    if ppcfg.enablePprof && os.Getenv("ENV_MODE") == "development" {
         p.StartPprof()
     }
 
