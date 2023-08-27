@@ -38,7 +38,6 @@ type PprofUtils struct {
 	KeyPath 	string
 	BaseURL		string
 	EnablePprof	bool
-	// router 		*mux.Router
 	wg      	sync.WaitGroup
 	errChMu 	sync.Mutex // Add a mutex for synchronizing error channel writes
 }
@@ -65,9 +64,9 @@ func (p *PprofUtils) SetLogger(log logger.LoggerInterface) {
     p.Log = log
 }
 
-func LoadConfig() error {
-    viper.SetConfigName("config") // Name of config file (without extension)
-    viper.AddConfigPath("./pprofutils/config") // Path to look for the config file in
+func LoadConfig(configName string, configPath string) error {
+    viper.SetConfigName(configName) // Name of config file (without extension)
+    viper.AddConfigPath(configPath) // Path to look for the config file in
 
     err := viper.ReadInConfig() // Find and read the config file
     if err != nil { // Handle errors reading the config file
