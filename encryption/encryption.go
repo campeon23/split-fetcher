@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,18 +23,94 @@ type Encryption struct {
 	PartsDir		string
 	PrefixParts		string
 	Log				logger.LoggerInterface
+	FileOps 		FileOperator
+	GetWrittenData 	[]byte
+}
+
+type FileOperator interface {
+    Remove(name string) 	error
+    Create(name string) 	(*os.File, error)
+	ReadFile(name string)	([]byte, error)
+	Open(name string)		(*os.File, error)
+	WriteFile(filename string, data []byte, perm os.FileMode) error
+    WriteEncryptedFile(filename string, data []byte, key []byte, perm os.FileMode) error
+}
+
+type RealFileOps struct{
+	Enc *Encryption
 }
 
 func NewEncryption(partsDir string, prefixParts string,log logger.LoggerInterface) *Encryption {
-	return &Encryption{
+	enc := &Encryption{
 		PartsDir: partsDir,
 		PrefixParts: prefixParts,
 		Log: log,
+		// FileOps: &RealFileOps{},
 	}
+	enc.FileOps = &RealFileOps{Enc: enc}
+    return enc
 }
 
 func (e *Encryption) SetLogger(log logger.LoggerInterface) {
     e.Log = log
+}
+
+func (r *RealFileOps) Remove(name string) error {
+    return os.Remove(name)
+}
+
+func (r *RealFileOps) Create(name string) (*os.File, error) {
+    return os.Create(name)
+}
+
+func (r *RealFileOps) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(name)
+}
+
+func (r *RealFileOps) Open(name string) (*os.File, error) {
+	return os.Open(name)
+}
+
+func (r *RealFileOps) WriteFile(filename string, data []byte, perm os.FileMode) error {
+	return os.WriteFile(filename, data, perm)
+}
+
+func (r *RealFileOps) WriteEncryptedFile(filename string, data []byte, key []byte, perm os.FileMode) error {
+	if len(key) != 32 {  // Check key length for AES-256
+		return errors.New("key length must be 32 bytes for AES-256")
+	}
+
+	// encryptedData, err := EncryptFile(data, key)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// return os.WriteFile(filename, encryptedData, perm)
+
+	// Since EncryptFile uses the filename to read the file, 
+    // first write the data to the file and then call EncryptFile.
+	err := r.WriteFile(filename, data, perm)
+	if err != nil {
+		return err
+	}
+
+	err = r.Enc.EncryptFile(filename, key)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *RealFileOps) WriteDecryptedFile(filename string, key []byte, data []byte, perm os.FileMode) error {
+	// Decrypt data in memory
+	decryptedData, err := r.Enc.DecryptFile(filename, key, false)
+	if err != nil {
+		return err
+	}
+
+	// Write decrypted data to file
+	return os.WriteFile(filename, decryptedData, 0644)
 }
 
 func (e *Encryption) CreateEncryptionKey(strings []string) ([]byte, error) {
@@ -62,7 +140,7 @@ func (e *Encryption) CreateEncryptionKey(strings []string) ([]byte, error) {
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
 func (e *Encryption) EncryptFile(filename string, key []byte) error {
 	e.Log.Infow("Initializing ecryption of manifest file.")
-	plaintext, err := os.ReadFile(filename)
+	plaintext, err := e.FileOps.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -89,8 +167,13 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 	ciphertext := make([]byte, len(plaintext))
 	encrypter.CryptBlocks(ciphertext, plaintext)
 
+	// Generate HMAC of the ciphertext
+	h := hmac.New(sha256.New, key)
+	h.Write(ciphertext)
+	mac := h.Sum(nil)
+
 	encryptedFilename := filename + ".enc"
-	encryptedFile, err := os.Create(encryptedFilename)
+	encryptedFile, err := e.FileOps.Create(encryptedFilename)
 	if err != nil {
 		return err
 	}
@@ -105,39 +188,57 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 		return fmt.Errorf("failed to create ciphertext: %v", err)
 	}
 
+	// Write HMAC to file
+	_, err = encryptedFile.Write(mac)
+	if err != nil {
+		return fmt.Errorf("failed to write HMAC: %w", err)
+	}
+
 	e.Log.Debugw("File encrypted successfully and saved as:", 
 		"encryptedFilename", encryptedFilename,
 	)
 
-	err = os.Remove(filename)
+	err = e.FileOps.Remove(filename)
 	if err != nil {
-		e.Log.Fatalw("Cannot remove encrypted file:", "error", err.Error())
+		return fmt.Errorf("cannot remove manifest: %w", err)
 	}
 
 	return nil
 }
 
 func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
-	encryptedFile, err := os.Open(encryptedFilename)
+	encryptedFile, err := e.FileOps.Open(encryptedFilename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open encrypted file: %w", err)
 	}
 	defer encryptedFile.Close()
 
 	iv := make([]byte, aes.BlockSize)
 	_, err = encryptedFile.Read(iv)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read aes block size: %w", err)
 	}
 
 	ciphertext, err := io.ReadAll(encryptedFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read encrypted file: %w", err)
+	}
+
+	// Extract HMAC from the end of the ciphertext and remove it
+	mac := ciphertext[len(ciphertext)-32:]
+	ciphertext = ciphertext[:len(ciphertext)-32]
+
+	// Validate HMAC
+	h := hmac.New(sha256.New, key)
+	h.Write(ciphertext)
+	expectedMac := h.Sum(nil)
+	if !hmac.Equal(mac, expectedMac) {
+		return nil, fmt.Errorf("integrity check failed: HMAC mismatch")
 	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
 	decrypter := cipher.NewCBCDecrypter(block, iv)
@@ -149,15 +250,15 @@ func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bo
 
 	if toDisk {
 		decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc")
-		decryptedFile, err := os.Create(decryptedFilename)
+		decryptedFile, err := e.FileOps.Create(decryptedFilename)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create decrypted file: %w", err)
 		}
 		defer decryptedFile.Close()
 
 		_, err = decryptedFile.Write(plaintext)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to write decrypted file: %w", err)
 		}
 
 		e.Log.Debugw("File decrypted successfully and saved as:",

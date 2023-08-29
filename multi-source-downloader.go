@@ -85,19 +85,23 @@ validation, to ensure file integrity. And more things...`,
         cfg.InitConfig() // Initializes configuration
 
 		// Execute the pprof server
-		if ppcfg.enablePprof && os.Getenv("ENV_MODE") == "development" {
-			ppcfg.Execute(cmd, args)
-		} else {
-			ppcfg.log.Debugw("Pprof server not started. ENV_MODE not in development mode.")
+		if ppcfg.enablePprof {
+			if os.Getenv("ENV_MODE") == "development" {
+				ppcfg.Execute(cmd, args)
+			} else {
+				ppcfg.log.Debugw("Pprof server not started. ENV_MODE not in development mode.")
+			}
 		}
 
 		// Execute the main function
 		cfg.Execute(cmd, args)
 
 		// Dump debug information
-		if ppcfg.enablePprof && os.Getenv("ENV_MODE") == "development" {
-			p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh)
-			ppcfg.DumpDebugFinalize(p)
+		if ppcfg.enablePprof {
+			if os.Getenv("ENV_MODE") == "development" {
+				p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh)
+				ppcfg.DumpDebugFinalize(p)
+			}
 		}
 	},
 }
@@ -108,9 +112,11 @@ func init() {
 	flags := NewFlags()
 	f := fileutils.NewFileutils(cfg.partsDir, cfg.prefixParts, cfg.log)
 	// Will run only in development mode
-	if os.Getenv("ENV_MODE") == "development" && f.PathExists(ppcfg.configPath) {
-		err := pprofutils.LoadConfig(ppcfg.configName, ppcfg.configPath)
-		if err != nil { cfg.log.Fatalf("Error loading config: %w", err)}
+	if f.PathExists(ppcfg.configPath) {
+		if os.Getenv("ENV_MODE") == "development" {
+			err := pprofutils.LoadConfig(ppcfg.configName, ppcfg.configPath)
+			if err != nil { cfg.log.Fatalf("Error loading config: %w", err)}
+		}
 	}
 
 	cobra.OnInitialize(cfg.InitConfig)
@@ -342,8 +348,10 @@ func (cfg *AppConfig) Execute(cmd *cobra.Command, args []string) {
 func (ppcfg *PprofConfig) Execute(cmd *cobra.Command, args []string) {
 	p := pprofutils.NewPprofUtils(ppcfg.enablePprof, ppcfg.pprofPort, ppcfg.secretToken, ppcfg.certPath, ppcfg.keyPath, ppcfg.baseURL, ppcfg.log, errCh)
 	// Conditionally start pprof if the flag is set
-    if ppcfg.enablePprof && os.Getenv("ENV_MODE") == "development" {
-        p.StartPprof()
+    if ppcfg.enablePprof {
+		if os.Getenv("ENV_MODE") == "development" {
+			p.StartPprof()
+		}
     }
 
 	// Listen to errors
