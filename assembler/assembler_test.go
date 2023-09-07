@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const partsDirTemp = "./testdata"
+const partsDirTemp = "./testdata_tmp"
 const prefixPartsTemp = "part_"
 
 // Mock logger for our tests
@@ -35,8 +35,8 @@ func (l *MockLogger) Fatalw(msg string, keysAndValues ...interface{}) {
 }
 
 func TestAssembleFileFromParts(t *testing.T) {
-	partsDir := partsDirTemp
-	prefixParts := prefixPartsTemp
+	partsDir := "test_data_tmp"
+	prefixParts := "part_"
 	timestamp := 1693492459594999000
 
 	l := logger.InitLogger(true)
@@ -78,7 +78,6 @@ func TestAssembleFileFromParts(t *testing.T) {
 	defer os.Remove(outFile.Name())
 
 	err = a.AssembleFileFromParts(m, outFile, 0, 0, hasher.Hasher{})
-	// l.Infow(err.Error())
 	assert.NoErrorf(t, err, "Failed to assemble file from parts: %v", err)
 	resultContent, _ := os.ReadFile(outFile.Name())
 	expectedContent := "content1content2content3"
@@ -93,9 +92,9 @@ func TestPrepareAssemblyEnvironment(t *testing.T) {
 	a := NewAssembler(3, partsDirTemp, false, prefixPartsTemp, int64(timestamp), l)
 
 	// Mock manifest content
-	manifestContent := []byte(`{"partsDir": "./testdata", "prefixParts": "part_"}`)
+	manifestContent := []byte(`{"partsDir": "./testdata_tmp", "prefixParts": "part_"}`)
 
-	_, outFile, _, err := a.PrepareAssemblyEnviroment("./testdata/testfile", manifestContent)
+	_, outFile, _, err := a.PrepareAssemblyEnviroment("./testdata_tmp/testfile", manifestContent)
 	defer os.Remove(outFile.Name())
 
 	assert.NoErrorf(t, err, "Failed to prepare assembly environment: %v", err)

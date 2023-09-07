@@ -48,6 +48,9 @@ certs
 *.bak*
 bak.*
 *.bak
+*.bkp*
+bkp.*
+*.bkp
 
 # Compressed files
 *.tar.*
