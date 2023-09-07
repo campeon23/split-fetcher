@@ -66,7 +66,7 @@ jobs:
 
       - name: Scan go files in '.' directory with gopls and show diagnostic results
         run: |
-          for gofile in $(find . -type f -name "*.go"); do
+          for gofile in $(find . -type f -name "*.go" ! -name "*windows*"); do
             echo "Scanning $gofile for errors..."
             gopls check $gofile
           done
@@ -74,8 +74,8 @@ jobs:
       - name: Scan go files in '.' directory with gopls -rpc.trace and show full rpc trace in lsp inspector format
         run: |
           for gofile in $(find . -type f -name "*.go" ! -name "*windows*"); do
-            echo "Scanning $gofile for errors..."
-            gopls gopls -rpc.trace -v check $gofile
+            echo "Scanning $gofile to print the full rpc trace in lsp inspector format..."
+            gopls -rpc.trace -v check $gofile
           done
 
       - name: Scan go files in '.' directory with vulncheck to find code vulnerabilities
