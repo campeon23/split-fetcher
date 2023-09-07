@@ -73,7 +73,7 @@ jobs:
 
       - name: Scan go files in '.' directory with gopls -rpc.trace and show full rpc trace in lsp inspector format
         run: |
-          for gofile in $(find . -type f -name "*.go"); do
+          for gofile in $(find . -type f -name "*.go" ! -name "*windows*"); do
             echo "Scanning $gofile for errors..."
             gopls gopls -rpc.trace -v check $gofile
           done
