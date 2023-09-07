@@ -30,6 +30,11 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
       
+      # Install jq
+      - name: Install jq
+        run: |
+          apt-get update && apt-get install -y jq
+    
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
@@ -56,6 +61,26 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+
+      - name: Scan go files in '.' directory with gopls and show diagnostic results
+        run: |
+          for gofile in $(find . -type f -name "*.go"); do
+            echo "Scanning $gofile for errors..."
+            gopls check $gofile
+          done
+
+      - name: Scan go files in '.' directory with gopls -rpc.trace and show full rpc trace in lsp inspector format
+        run: |
+          for gofile in $(find . -type f -name "*.go"); do
+            echo "Scanning $gofile for errors..."
+            gopls gopls -rpc.trace -v check $gofile
+          done
+
+      - name: Scan go files in '.' directory with vulncheck to find code vulnerabilities
+        run: |
+          echo "Scanning $gofile for errors..."
+          gopls vulncheck ./... | jq .
 
       - name: Scan SBOM files in 'dist' directory with Grype
         run: |
