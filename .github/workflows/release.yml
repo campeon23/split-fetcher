@@ -30,22 +30,24 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
       
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.21
+        env:
+          GO111MODULE: off
+
       # Install golangci-lint
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v2
         with:
           version: latest
           only-new-issues: false
-          
-      - name: Set up Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: 1.21
 
-      # # Install gopls
-      # - name: Install gopls
-      #   run: |
-      #     go install golang.org/x/tools/gopls@latest
+      # Install gopls
+      - name: Install gopls
+        run: |
+          go install golang.org/x/tools/gopls@latest
           
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v2
