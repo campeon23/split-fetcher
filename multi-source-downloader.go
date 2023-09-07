@@ -118,17 +118,15 @@ func init() {
 		dbcfg.InitConfig(dbcfg.ViperInstance)
 	})
 	// Initialize the Flags struct
-	rootCmd.PersistentFlags().IntVarP(&appcfg.MaxConcurrentConnections, flags.MaxConcurrentConnections, "c", 0, `(Optional) Controls how many parts of the 
-file are downloaded at the same time. You can set a specific number, 
-or if you set it to 0, it will choose the maximum concurrenct connections,
-equal to the number of chunk parts to split the file.`)
-	rootCmd.PersistentFlags().StringVarP(&appcfg.ShaSumsURL, 	flags.ShaSumsURL, 	 	"s", "", 		`(Optional) The URL of the file containing the hashes refers to a file 
-with either MD5 or SHA-256 hashes, used to verify the integrity and 
-authenticity of the downloaded file.`)
+	rootCmd.PersistentFlags().IntVarP(&appcfg.MaxConcurrentConnections, flags.MaxConcurrentConnections, "c", 0, `(Optional) Controls how many parts of the file are downloaded at the same time. 
+You can set a specific number, or if you set it to 0, it will choose the maximum 
+concurrent connections, equal to the number of chunk parts to split the file.`)
+	rootCmd.PersistentFlags().StringVarP(&appcfg.ShaSumsURL, 	flags.ShaSumsURL, 	 	"s", "", 		`(Optional) The URL of the file containing the hashes refers to a file with either MD5 or 
+SHA-256 hashes, used to verify the integrity and  authenticity of the downloaded file.`)
 	rootCmd.PersistentFlags().StringVarP(&appcfg.UrlFile, 		flags.UrlFile, 			"u", "",		"(Required) URL of the file to download")
 	rootCmd.PersistentFlags().IntVarP(&appcfg.NumParts, 		flags.NumParts, 	 	"n", 2, 	 	"(Optional) Number of parts to split the download into. Default value is 2")
 	rootCmd.PersistentFlags().StringVarP(&appcfg.PartsDir, 		flags.PartsDir, 	  	"p", "", 	 	"(Optional) The directory to save the parts files")
-	rootCmd.PersistentFlags().StringVarP(&appcfg.PrefixParts, 	flags.PrefixParts, 	 	"x", "output", "(Optional) The prefix to use for naming the parts files")
+	rootCmd.PersistentFlags().StringVarP(&appcfg.PrefixParts, 	flags.PrefixParts, 	 	"x", "output",	"(Optional) The prefix to use for naming the parts files")
 	rootCmd.PersistentFlags().StringVarP(&appcfg.Proxy, 		flags.Proxy, 		 	"r", "", 	 	"(Optional) Proxy to use for the download")
 	rootCmd.PersistentFlags().BoolVarP(&appcfg.KeepParts, 		flags.KeepParts, 	 	"k", false, 	"(Optional) Whether to keep the parts files after assembly")
 	rootCmd.PersistentFlags().BoolVarP(&appcfg.DecryptManifest,flags.DecryptManifest,	"f", false, 	"(Optional) If true, decrypt the manifest file")
@@ -136,7 +134,7 @@ authenticity of the downloaded file.`)
     rootCmd.PersistentFlags().BoolVarP(&appcfg.DownloadOnly, 	flags.DownloadOnly, 	"d", false, 	"(Optional) Download part files only if true")
     rootCmd.PersistentFlags().BoolVarP(&appcfg.AssembleOnly, 	flags.AssembleOnly, 	"a", false, 	"(Optional) Assemble part files only if true and --parts-dir and --manifest flags are passed")
     rootCmd.PersistentFlags().StringVarP(&appcfg.OutputFile, 	flags.OutputFile,		"o", "", 		"(Optional) Name and location of the final output file")
-	rootCmd.PersistentFlags().BoolVarP(&appcfg.Verbose,		flags.Verbose, 		 	"v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
+	rootCmd.PersistentFlags().BoolVarP(&appcfg.Verbose,			flags.Verbose, 		 	"v", false, 	`(Optional) Output verbose logging (INFO and Debug), verbose not passed
 only output INFO logging.`)
 	rootCmd.PersistentFlags().BoolVarP(&ppcfg.EnablePprof, 	flags.EnablePprof,  	"e", false, 	"Enable pprof profiling. This parameter will only work, if a pprof configuration file exits.")
 	appcfg.BindFlagToViper(flags.MaxConcurrentConnections, appcfg.Log)

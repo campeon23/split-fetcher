@@ -26,11 +26,15 @@ Flags:
   -k, --keep-parts             // (Optional) Whether to keep the parts files after assembly
   -m, --manifest-file string   // (Required by --assemble-only) Manifest file (must be decrypted) to pass to the main function
   -c, --max-connections int    // (Optional) Controls how many parts of the file are downloaded at the same time.
+                               // You can set a specific number, or if you set it to 0, it will choose the maximum
+                               // concurrent connections, equal to the number of chunk parts to split the file.
   -n, --num-parts int          // (Optional) Number of parts to split the download into (default 5)
   -o, --output string          // (Optional) Name and location of the final output file
   -p, --parts-dir string       // (Optional) The directory to save the parts files
   -x, --prefix-parts string    // (Optional) The prefix to use for naming the parts files (default "output-")
-  -s, --sha-sums string        // (Optional) The URL of the file containing the hashes.
+  -r, --proxy string           // (Optional) Proxy to use for the download
+  -s, --sha-sums string        // (Optional) The URL of the file containing the hashes refers to a file with either MD5 or
+                               // SHA-256 hashes, used to verify the integrity and  authenticity of the downloaded file.
   -u, --url string             // (Required) URL of the file to download
   -v, --verbose                // (Optional) Output verbose logging (INFO and Debug), verbose not passed only output INFO logging.
 ```
