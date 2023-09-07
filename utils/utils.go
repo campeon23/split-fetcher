@@ -154,6 +154,5 @@ func (u *Utils) ExtractTimestampFromFilename(filename string) (int64, error) {
 		return 0, fmt.Errorf("failed to parse timestamp: %w", err)
 	}
 
-	fmt.Printf("timestamp from encrypted manifest: %d\n", timestamp)
 	return timestamp, nil
 }

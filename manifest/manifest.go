@@ -75,7 +75,7 @@ func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string
 		path = filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader")
 	}
 
-	return filepath.Join(path, fileName+".manifest." + hash + "-" + strconv.FormatInt(m.TimeStamp, 10) + ".json"), nil
+	return filepath.Join(path, fileName + "-manifest-" + hash + "-" + strconv.FormatInt(m.TimeStamp, 10) + ".json"), nil
 }
 
 func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName string, hash string) error {

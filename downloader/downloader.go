@@ -661,8 +661,6 @@ func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryp
 		return nil, "", fmt.Errorf("failed to obtain the path of the downloaded manifest: %w", err)
 	}
 
-	fmt.Print("manifestPath: ", manifestPath, "\n")
-
 	key, err := e.CreateEncryptionKey(manifestPath, partFilesHashes, true)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to obtain the encryption key: %w", err)
