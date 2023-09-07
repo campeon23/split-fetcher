@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,12 +15,34 @@ import (
 	"github.com/campeon23/multi-source-downloader/hasher"
 	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/campeon23/multi-source-downloader/utils"
+	"github.com/spf13/viper"
 )
 
 type Fileutils struct {
 	PartsDir	string
 	PrefixParts	string
 	Log			logger.LoggerInterface
+}
+type FileUtilsInitImpl struct {
+    // Any additional fields that you might want to include
+}
+type FUInitializer interface {
+    NewFileutils(partDir string, prefixParts string, log logger.LoggerInterface) FileInterface
+}
+type FileInterface interface {
+    PathExists(path string) bool
+    // ... other required methods
+}
+type FileOperator interface {
+    Remove(name string) 	error
+    Create(name string) 	(*os.File, error)
+	ReadFile(name string)	([]byte, error)
+	Open(name string)		(*os.File, error)
+	WriteFile(filename string, data []byte, perm os.FileMode) error
+    WriteEncryptedFile(filename string, data []byte, key []byte, perm os.FileMode) error
+}
+type RealFileUtils struct {
+	Init *Fileutils
 }
 
 func NewFileutils(partsDir string, prefixParts string, log logger.LoggerInterface) *Fileutils {
@@ -32,6 +55,21 @@ func NewFileutils(partsDir string, prefixParts string, log logger.LoggerInterfac
 
 func (f *Fileutils) SetLogger(log logger.LoggerInterface) {
     f.Log = log
+}
+
+func (fu *FileUtilsInitImpl) NewFileutils(partsDir string, prefixParts string, log logger.LoggerInterface) FileInterface {
+    return &RealFileUtils{
+        Init: &Fileutils{
+            // Necessary fields to initialize your RealDB and its embedded InitDB
+			PartsDir: partsDir,
+			PrefixParts: prefixParts,
+			Log: log,
+		},   
+    }
+}
+
+func (fu *RealFileUtils) PathExists(path string) bool {
+	return fu.Init.PathExists(path)
 }
 
 func (f *Fileutils) PathExists(path string) bool {
@@ -52,11 +90,11 @@ func (f *Fileutils) CreateFile(filePath string) (*os.File, error) {
 		// If the directory does not exist, create it
 		err = os.MkdirAll(dirPath, 0755)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create directory: %w", err)
 		}
 	} else if err != nil {
 		// If there is any other error
-		return nil, err
+		return nil, fmt.Errorf("failed to validate path: %w", err)
 	}
 
 	// Reconstruct the complete file path
@@ -65,7 +103,7 @@ func (f *Fileutils) CreateFile(filePath string) (*os.File, error) {
     // Initialize the output file
     outFile, err := os.Create(filePath)
     if err != nil {
-        f.Log.Fatalw("Error: Failed to create output file", "error", err)
+        return nil, fmt.Errorf("failed to create file: %w", err)
     }
 
 	return outFile, nil
@@ -115,12 +153,11 @@ func (f *Fileutils) ValidateCreatePath(path string) (error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		err = os.MkdirAll(path, os.ModePerm)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create directory: %w", err)
 		}
 	} else if err != nil {
-		return err
+		return fmt.Errorf("failed to validate path: %w", err)
 	}
-
 	return nil
 }
 
@@ -183,14 +220,11 @@ func (f *Fileutils) ValidatePath(path string) (string, error) {
 
     // Split path and validate each part
     parts := strings.Split(path, "/")
-    for _, part := range parts {
-        if part == "." || part == "~" || part == "" {
-            continue
-        }
-        if !dirRegex.MatchString(part) && !filenameRegex.MatchString(part) {
-            return "", errors.New("invalid character in path or filename")
-        }
-    }
+	// splitValidatePath splits the path and validates each part
+	err = f.splitValidatePath(parts, dirRegex, filenameRegex)
+	if err != nil {
+		return "", fmt.Errorf("failed to split and to validate path: %w", err)
+	}
 
     // Check for valid paths starting with ~ or ./
     if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "~/") {
@@ -202,6 +236,18 @@ func (f *Fileutils) ValidatePath(path string) (string, error) {
     }
 
 	return fmt.Sprintf("Valid path. Directory: %s", path), nil
+}
+
+func (f *Fileutils) splitValidatePath(parts []string, dirRegex *regexp.Regexp, filenameRegex *regexp.Regexp) error{
+	for _, part := range parts {
+        if part == "." || part == "~" || part == "" {
+            continue
+        }
+        if !dirRegex.MatchString(part) && !filenameRegex.MatchString(part) {
+            return errors.New("invalid character in path or filename")
+        }
+    }
+	return nil
 }
 
 func (f *Fileutils) ProcessPartsDir() error {
@@ -244,14 +290,11 @@ func (f *Fileutils) RemovePartsOrDirectory(u *utils.Utils, keepParts bool, parts
             if err != nil {
                 return fmt.Errorf("failed to read directory: %w", err)
             }
-            for _, file := range files {
-                if strings.HasPrefix(file.Name(), prefixParts) {
-                    err = os.Remove(filepath.Join(sanitizedPartsDir, file.Name()))
-                    if err != nil {
-                        f.Log.Warnw("Failed to remove file:", "file", file.Name(), "error", err.Error())
-                    }
-                }
-            }
+			// Remove files with a specific prefix
+			err = f.removeFiles(files, prefixParts, sanitizedPartsDir)
+			if err != nil {
+				return fmt.Errorf("failed to remove files: %w", err)
+			}
         } else if sanitizedPartsDir != "" && sanitizedPartsDir != "." && sanitizedPartsDir != "./" {
             // Remove the directory and all its contents
             err := os.RemoveAll(partsDir)
@@ -261,4 +304,31 @@ func (f *Fileutils) RemovePartsOrDirectory(u *utils.Utils, keepParts bool, parts
         }
     }
     return nil
+}
+
+func (f *Fileutils) removeFiles(files []fs.DirEntry, prefixParts string, sanitizedPartsDir string) error {
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), prefixParts) {
+			err := os.Remove(filepath.Join(sanitizedPartsDir, file.Name()))
+			if err != nil {
+				return fmt.Errorf("failed to remove file: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (f *Fileutils) LoadConfig(v *viper.Viper, configName string, configPath string) error {
+	if f.PathExists(configPath) {
+		v.SetConfigName(configName) // Name of config file (without extension)
+		v.AddConfigPath(configPath) // Path to look for the config file in
+
+		err := v.ReadInConfig() // Find and read the config file
+		if err != nil { // Handle errors reading the config file
+			return fmt.Errorf("fatal error config file: %w", err)
+		}
+	} else {
+		return fmt.Errorf("config file does not exist: %s", configPath)
+	}
+	return nil
 }

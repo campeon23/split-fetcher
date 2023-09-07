@@ -2,6 +2,7 @@ package logger
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"testing"
 
@@ -9,6 +10,60 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+const debugMessage = "Debug message"
+
+type MockLogger struct {
+	InfoLogs  []string
+	DebugLogs []string
+	ErrorLogs []string
+	FatalLogs []string
+	PrintLogs []string
+	WarnLogs  []string
+	SyncCalls int
+}
+
+func (l *MockLogger) Infow(msg string, keysAndValues ...interface{}) {
+	l.InfoLogs = append(l.InfoLogs, msg)
+}
+
+func (l *MockLogger) Debugw(msg string, keysAndValues ...interface{}) {
+	l.DebugLogs = append(l.DebugLogs, msg)
+}
+
+func (l *MockLogger) Debugf(msg string, args ...interface{}) {
+	formattedMsg := fmt.Sprintf(msg, args...)
+    l.DebugLogs = append(l.DebugLogs, formattedMsg)
+}
+
+func (l *MockLogger) Errorf(msg string, args ...interface{}) {
+	formattedMsg := fmt.Sprintf(msg, args...)
+    l.ErrorLogs = append(l.ErrorLogs, formattedMsg)
+}
+
+func (l *MockLogger) Fatalf(msg string, args ...interface{}) {
+	formattedMsg := fmt.Sprintf(msg, args...)
+    l.FatalLogs = append(l.FatalLogs, formattedMsg)
+}
+
+func (l *MockLogger) Fatalw(msg string, keysAndValues ...interface{}) {
+	l.FatalLogs = append(l.FatalLogs, msg)
+}
+
+func (l *MockLogger) Printf(msg string, args ...interface{}) {
+	formattedMsg := fmt.Sprintf(msg, args...)
+    l.PrintLogs = append(l.PrintLogs, formattedMsg)
+}
+
+func (l *MockLogger) Sync() {
+	fmt.Println("Sync is called!")
+	l.SyncCalls++
+}
+
+func (l *MockLogger) Warnw(msg string, keysAndValues ...interface{}) {
+	// Capture logs if necessary
+	l.WarnLogs = append(l.WarnLogs, msg)
+}
 
 func TestLogger(t *testing.T) {
 	assert := assert.New(t)
@@ -21,8 +76,8 @@ func TestLogger(t *testing.T) {
 	assert.NotNil(logger, "Failed to initialize logger")
 
 	// 2. Test logs capture
-	logger.Debugw("Debug message", "key", "value")
-	assert.Contains(buf.String(), "Debug message", "Expected log message not found")
+	logger.Debugw(debugMessage, "key", "value")
+	assert.Contains(buf.String(), debugMessage, "Expected log message not found")
 	assert.Contains(buf.String(), "key", "value", "Expected key-value pair not found")
 
 	// ... other tests ...
@@ -36,8 +91,8 @@ func TestLogger(t *testing.T) {
 	log.SetOutput(&buf)
 	buf.Reset()
 
-	logger.Debugw("Debug message", "key", "value")
-	assert.NotContains(buf.String(), "Debug message", "Debug message should not be logged in production mode")
+	logger.Debugw(debugMessage, "key", "value")
+	assert.NotContains(buf.String(), debugMessage, "Debug message should not be logged in production mode")
 
 	logger.Infow("Info message", "info_key", "info_value")
 	assert.Contains(buf.String(), "Info message", "Expected log message not found in production mode")

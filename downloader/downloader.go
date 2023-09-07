@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/campeon23/multi-source-downloader/config"
+	"github.com/campeon23/multi-source-downloader/database/initdb"
 	"github.com/campeon23/multi-source-downloader/encryption"
 	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/hasher"
@@ -30,26 +32,85 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 type Downloader struct {
+	DBConfig 					*config.DBConfig
+	// URLFile 					string 
+	// NumParts 					int 
+	// MaxConcurrentConnections 	int
+	// PartsDir 					string
+	// PrefixParts 				string
+	// Proxy 						string
+	// Timestamp 					int64
+	Parameters 					*Parameters
+	Log 						logger.LoggerInterface
+	ErrCh 						chan error
+}
+
+type Parameters struct {
 	URLFile 					string 
 	NumParts 					int 
 	MaxConcurrentConnections 	int
 	PartsDir 					string
 	PrefixParts 				string
 	Proxy 						string
-	Log 						logger.LoggerInterface
-	ErrCh 						chan error
+	Timestamp 					int64
 }
 
-func NewDownloader(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, prefixParts string, proxy string, log logger.LoggerInterface, errCh chan error) *Downloader {
+type Progressbar struct {
+	Bars			[]*uiprogress.Bar
+	NameMaxLenght 	int
+	Name			string
+	Rangesize		int
+	Size			int
+	Speed			atomic.Value
+}
+
+type StreamBuffer struct {
+	Buf 						*[]byte
+	Reader 						io.Reader
+	Writer 						*utils.ProgressWriter
+	TotalBytesDownloaded		int64
+	TotalElapsedMilliseconds	int64
+}
+
+func NewDownloader(dbcfg *config.DBConfig, parameters *Parameters, log logger.LoggerInterface, errCh chan error) *Downloader {
 	return &Downloader{
-		URLFile: urlFile, 
-		NumParts: numParts,
-		MaxConcurrentConnections: maxConcurrentConnections,
-		PartsDir: partsDir,
-		PrefixParts: prefixParts,
-		Proxy: proxy,
-		Log: log,
-		ErrCh: errCh,
+		DBConfig: 					dbcfg,
+		Parameters: 				parameters,
+		Log: 						log,
+		ErrCh: 						errCh,
+	}
+}
+
+func NewParameters(urlFile string, numParts int, maxConcurrentConnections int, partsDir string, prefixParts string, proxy string, timestamp int64) *Parameters {
+	return &Parameters{
+		URLFile:					urlFile, 
+		NumParts: 					numParts,
+		MaxConcurrentConnections:	maxConcurrentConnections,
+		PartsDir: 					partsDir,
+		PrefixParts: 				prefixParts,
+		Proxy: 						proxy,
+		Timestamp: 					timestamp,
+	}
+}
+
+func NewProgressbar(rangesize int, nameMaxLenght int, name string, bars []*uiprogress.Bar, size int, speed atomic.Value) *Progressbar {
+	return &Progressbar{
+		Bars:			bars,
+		NameMaxLenght: 	nameMaxLenght,
+		Name:			name,
+		Rangesize:		rangesize,
+		Size:			size,
+		Speed:			speed,
+	}
+}
+
+func NewStreamBuffer(buf *[]byte, reader io.Reader, writer *utils.ProgressWriter, totalBytesDownloaded int64, totalElapsedMilliseconds int64) *StreamBuffer {
+	return &StreamBuffer{
+		Buf: 						buf,
+		Reader: 					reader,
+		Writer: 					writer,
+		TotalBytesDownloaded:		totalBytesDownloaded,
+		TotalElapsedMilliseconds:	totalElapsedMilliseconds,
 	}
 }
 
@@ -60,17 +121,17 @@ func (d *Downloader) SetLogger(log logger.LoggerInterface) {
 func (d *Downloader) InitDownloadManifest(fileName, hash, etag, hashType string, size, rangeSize int) manifest.DownloadManifest {
 	return manifest.DownloadManifest{
 		Version:  "1.0",
-		UUID:     uuid.New().String(),
-		Filename: fileName,
-		FileHash: hash,
-		URL:      d.URLFile,
-		Etag:     etag,
-		HashType: hashType,
-		PartsDir: d.PartsDir,
-		PrefixParts: d.PrefixParts,
-		Size:     size,
-		NumParts: d.NumParts,
-		RangeSize: rangeSize,
+		UUID:     	uuid.New().String(),
+		Filename:	fileName,
+		FileHash: 	hash,
+		URL:      	d.Parameters.URLFile,
+		Etag:     	etag,
+		HashType: 	hashType,
+		PartsDir: 	d.Parameters.PartsDir,
+		PrefixParts: d.Parameters.PrefixParts,
+		Size:     	size,
+		NumParts: 	d.Parameters.NumParts,
+		RangeSize: 	rangeSize,
 	}
 }
 
@@ -83,7 +144,7 @@ func (d *Downloader) InitUIAndDownloadParameters() (int, atomic.Value, string) {
 	var speed atomic.Value
 	speed.Store("")
 	progressbarName := "output part "
-	maxProgressbarLen := len(progressbarName + fmt.Sprint(d.NumParts))
+	maxProgressbarLen := len(progressbarName + fmt.Sprint(d.Parameters.NumParts))
 	return maxProgressbarLen, speed, progressbarName
 }
 
@@ -91,7 +152,7 @@ func (d *Downloader) InitUIAndDownloadParameters() (int, atomic.Value, string) {
 func (d *Downloader) InitDownloadPart(u *utils.Utils, i int, progressbarName string) (int64, string, *os.File, string, error) {
     timestamp := u.GenerateTimestamp()
     progressbarName = fmt.Sprintf(progressbarName + "%d", i+1)
-    outputPartFileName := fmt.Sprintf("%s" + string(os.PathSeparator) + "%s-%s-%d.part", d.PartsDir, d.PrefixParts, uuid.New(), i+1)
+    outputPartFileName := fmt.Sprintf("%s" + string(os.PathSeparator) + "%s-%s-%d.part", d.Parameters.PartsDir, d.Parameters.PrefixParts, uuid.New(), i+1)
     outputPartFile, err := os.Create(outputPartFileName)
 	if err != nil {
 		return 0, "", nil, "", fmt.Errorf("failed to create part file: %w", err)
@@ -132,12 +193,12 @@ func startsWithHTTP(s string) bool {
 func (d *Downloader) makeHTTPClient() (*http.Client, error) {
 	// Create a custom HTTP client
 	var proxyFunc func(*http.Request) (*url.URL, error)
-	if d.Proxy != "" {
+	if d.Parameters.Proxy != "" {
 		// Ensure the proxy has the correct format
-		if !startsWithHTTP(d.Proxy) {
-			d.Proxy = "http://" + d.Proxy
+		if !startsWithHTTP(d.Parameters.Proxy) {
+			d.Parameters.Proxy = "http://" + d.Parameters.Proxy
 		}
-		proxyURL, err := url.Parse(d.Proxy)
+		proxyURL, err := url.Parse(d.Parameters.Proxy)
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL: %w", err)
 		}
@@ -152,7 +213,7 @@ func (d *Downloader) makeHTTPClient() (*http.Client, error) {
 
 	d.Log.Debugw(
 			"Using proxy function", 
-			"proxy", d.Proxy,
+			"proxy", d.Parameters.Proxy,
 			"proxyFunc", proxyFunc,
 		)
 
@@ -183,7 +244,7 @@ func (d *Downloader) CreateProgressbar(i int, rangeSize int, maxProgressbarNameL
 // HTTP Request and Download
 func (d *Downloader) DownloadFileChunk(client HTTPClient, start int, end int) (*http.Response, error) {
 	// Create a new HTTP request with the range header
-    req, err := http.NewRequest("GET", d.URLFile, nil)
+    req, err := http.NewRequest("GET", d.Parameters.URLFile, nil)
     if err != nil {
         return nil, fmt.Errorf("failed to create a new HTTP reaquest: %w", err)
     }
@@ -196,7 +257,7 @@ func (d *Downloader) DownloadFileChunk(client HTTPClient, start int, end int) (*
     return resp, nil
 }
 
-func (d *Downloader) CreateBufferProgressbar(resp *http.Response, totalSize int, bar *uiprogress.Bar, outputPartFile *os.File) (*[]byte, io.Reader, *utils.ProgressWriter, int64, int64) {
+func (d *Downloader) CreateBufferProgressbar(resp *http.Response, totalSize int, bar *uiprogress.Bar, outputPartFile *os.File) (*StreamBuffer) {
 	// Create a buffer, reader and writter
 	buf := utils.BufferPool.Get().(*[]byte) // Get a buffer from the pool
 
@@ -211,10 +272,12 @@ func (d *Downloader) CreateBufferProgressbar(resp *http.Response, totalSize int,
 	totalBytesDownloaded := int64(0)
 	totalElapsedMilliseconds := int64(0)
 
-	return buf, reader, writer, totalBytesDownloaded, totalElapsedMilliseconds
+	streamBuffer := NewStreamBuffer(buf, reader, writer, totalBytesDownloaded, totalElapsedMilliseconds)
+
+	return streamBuffer
 }
 
-func (d *Downloader) ReadStreamWriteFile(reader io.Reader, writer *utils.ProgressWriter, buf *[]byte, rangeSize int, totalBytesDownloaded int64, totalElapsedMilliseconds int64, speed atomic.Value, bar *uiprogress.Bar, outputPartFile *os.File, outputPartFileName string) (*os.File, int64, error) {
+func (d *Downloader) ReadStreamWriteFile(streamBuffer *StreamBuffer, rangeSize int, speed atomic.Value, bar *uiprogress.Bar, outputPartFile *os.File, outputPartFileName string) (*os.File, int64, error) {
 	// Append the speed function to the bar (just once)
 	bar.AppendFunc(func(b *uiprogress.Bar) string {
 		speedStr, ok := speed.Load().(string)
@@ -224,26 +287,42 @@ func (d *Downloader) ReadStreamWriteFile(reader io.Reader, writer *utils.Progres
 		return fmt.Sprintf("%s %s", utils.FormatPercentage(int64(b.Current()), int64(rangeSize)), speedStr)
 	})
 
+	totalBytesDownloaded, err := d.updateStream(streamBuffer, bar, &speed)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to update stream: %w", err)
+	}
+
+	// Close and reopen the file to calculate the hash
+	outputPartFile.Close()
+	outputPartFile, err = os.Open(outputPartFileName)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to open part file %w", err)
+	}
+
+	return outputPartFile, totalBytesDownloaded, nil
+}
+
+func (d *Downloader) updateStream(streamBuffer *StreamBuffer, bar *uiprogress.Bar, speed *atomic.Value) (int64, error) {
 	startTime := time.Now() // record start time of reading chunk
 	for {
 		// read a chunk
-		bytesRead, err := reader.Read(*buf)
+		bytesRead, err := streamBuffer.Reader.Read(*streamBuffer.Buf)
 		if bytesRead > 0 {
 			// write a chunk
-			_, err := writer.Write((*buf)[:bytesRead])
+			_, err := streamBuffer.Writer.Write((*streamBuffer.Buf)[:bytesRead])
 			if err != nil {
-				return nil, 0, fmt.Errorf("failed to write a chunk: %w", err)
+				return 0, fmt.Errorf("failed to write a chunk: %w", err)
 			}
 
 			// calculate elapsed time and add to total
 			elapsed := time.Since(startTime)
-			totalElapsedMilliseconds += elapsed.Microseconds()
+			streamBuffer.TotalElapsedMilliseconds += elapsed.Microseconds()
 
 			// add bytes downloaded to total
-			totalBytesDownloaded += int64(bytesRead)
+			streamBuffer.TotalBytesDownloaded += int64(bytesRead)
 
 			// Update the progress bar to the current total bytes downloaded
-			if err := bar.Set(int(totalBytesDownloaded)); err != nil {
+			if err := bar.Set(int(streamBuffer.TotalBytesDownloaded)); err != nil {
 				d.Log.Infow("Warning: failed updating the progress bar: %v", err)
 			}
 		}
@@ -253,21 +332,13 @@ func (d *Downloader) ReadStreamWriteFile(reader io.Reader, writer *utils.Progres
 			break
 		}
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed, io.EOF ecounted: %w", err)
+			return 0, fmt.Errorf("failed, io.EOF ecounted: %w", err)
 		}
 		startTime = time.Now() // reset start time after processing the chunk
-		currentSpeed := utils.FormatSpeed(totalBytesDownloaded, totalElapsedMilliseconds)
+		currentSpeed := utils.FormatSpeed(streamBuffer.TotalBytesDownloaded, streamBuffer.TotalElapsedMilliseconds)
 		speed.Store(currentSpeed)
 	}
-
-	// Close and reopen the file to calculate the hash
-	outputPartFile.Close()
-	outputPartFile, err := os.Open(outputPartFileName)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to open part file %w", err)
-	}
-
-	return outputPartFile, totalBytesDownloaded, nil
+	return streamBuffer.TotalBytesDownloaded, nil
 }
 
 // File Hash Computation
@@ -287,7 +358,7 @@ func (d *Downloader) RenameValidateOutputFile(f *fileutils.Fileutils, outputPart
 	// Close the file before renaming
 	outputPartFile.Close()
 
-	partFileName := fmt.Sprintf("%s" + string(os.PathSeparator) + "%s-%s-%d.part", d.PartsDir, d.PrefixParts, sha256HashString, timestamp)
+	partFileName := fmt.Sprintf("%s" + string(os.PathSeparator) + "%s-%s-%d.part", d.Parameters.PartsDir, d.Parameters.PrefixParts, sha256HashString, timestamp)
 
 	if f.PathExists(outputPartFileName) && !f.PathExists(partFileName) {
 		if err := os.Rename(outputPartFileName, partFileName); err != nil {
@@ -318,31 +389,31 @@ func (d *Downloader) UpdateDownloadManifest(downloadManifest *manifest.DownloadM
     })
 }
 
-func (d *Downloader) DownloadPart(client *http.Client, i int, rangeSize int, size int, sem chan struct{}, maxProgressbarNameLen int, progressbarName string, progressBars []*uiprogress.Bar, partFilesHashes []string, speed atomic.Value, downloadManifest *manifest.DownloadManifest, wg *sync.WaitGroup) {
+func (d *Downloader) DownloadPart(client *http.Client, i int, sem chan struct{}, progressbar *Progressbar, partFilesHashes []string, downloadManifest *manifest.DownloadManifest, wg *sync.WaitGroup) {
     // This remains largely unchanged.
-	f := fileutils.NewFileutils(d.PartsDir, d.PrefixParts, d.Log)
-	u := utils.NewUtils(d.PartsDir, d.Log)
+	f := fileutils.NewFileutils(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Log)
+	u := utils.NewUtils(d.Parameters.PartsDir, d.Log)
     go func(i int) {
-        if d.MaxConcurrentConnections != 0 {
+        if d.Parameters.MaxConcurrentConnections != 0 {
             sem <- struct{}{}
             defer func() { <-sem }()
         }
         defer wg.Done()
 
 		// Initialie download part file process
-        timestamp, progressbarName, outputPartFile, outputPartFileName, err := d.InitDownloadPart(u, i, progressbarName)
+        timestamp, progressbarName, outputPartFile, outputPartFileName, err := d.InitDownloadPart(u, i, progressbar.Name)
 		if err != nil {
             d.ErrCh <- fmt.Errorf("failed to initialize download parts: %w", err)
             return
         }
 
 		// Create Progress bar
-		bar := d.CreateProgressbar(i, rangeSize, maxProgressbarNameLen, progressbarName, speed, progressBars)
+		bar := d.CreateProgressbar(i, progressbar.Rangesize, progressbar.NameMaxLenght, progressbarName, progressbar.Speed, progressbar.Bars)
 
-		startLength := i * rangeSize
-		endLength := startLength + rangeSize - 1
-		if i == d.NumParts - 1 {
-			endLength = size - 1
+		startLength := i * progressbar.Rangesize
+		endLength := startLength + progressbar.Rangesize - 1
+		if i == d.Parameters.NumParts - 1 {
+			endLength = progressbar.Size - 1
 		}
 
 		totalSize := endLength - startLength + 1
@@ -355,17 +426,17 @@ func (d *Downloader) DownloadPart(client *http.Client, i int, rangeSize int, siz
         }
 
 		// Create buffer, reader and writter
-		buf, reader, writer, totalBytesDownloaded, totalElapsedMilliseconds := d.CreateBufferProgressbar(resp, totalSize, bar, outputPartFile)
+		streamBuffer := d.CreateBufferProgressbar(resp, totalSize, bar, outputPartFile)
 
 		// Read stream and write part file
-		outputPartFile, totalBytesDownloaded, err = d.ReadStreamWriteFile(reader, writer, buf, rangeSize, totalBytesDownloaded, totalElapsedMilliseconds, speed, bar, outputPartFile, outputPartFileName)
+		outputPartFile, totalBytesDownloaded, err := d.ReadStreamWriteFile(streamBuffer, progressbar.Rangesize, progressbar.Speed, bar, outputPartFile, outputPartFileName)
 		if err != nil {
             d.ErrCh <- fmt.Errorf("failed to read stream write to file: %w", err)
             return
         }
 
 		// Returning buffer to pool after finished using it completely.
-		utils.BufferPool.Put(buf)
+		utils.BufferPool.Put(streamBuffer.Buf)
 
         // After downloading, compute hash
         sha256HashString, err := d.ComputeHash(i, partFilesHashes, outputPartFile)
@@ -396,7 +467,7 @@ func (d *Downloader) FetchFileInfo(client *http.Client) (int, string, string, er
 }
 
 func (d *Downloader) GetFileNameAndHash(hashes map[string]string) (string, string, error) {
-	parsedURL, err := url.Parse(d.URLFile)
+	parsedURL, err := url.Parse(d.Parameters.URLFile)
 	if err != nil {
 		return "", "", fmt.Errorf("error: Invalid URL: %w", err)
 	}
@@ -405,16 +476,17 @@ func (d *Downloader) GetFileNameAndHash(hashes map[string]string) (string, strin
 	return fileName, hash, nil
 }
 
-func (d *Downloader) ManagePartDownload(client *http.Client, size int, rangeSize int, maxProgressbarNameLen int, progressbarName string, progressBars []*uiprogress.Bar, partFilesHashes []string, speed atomic.Value, downloadManifest *manifest.DownloadManifest, sem chan struct{}) {
+func (d *Downloader) ManagePartDownload(client *http.Client, progressbar *Progressbar, partFilesHashes []string, downloadManifest *manifest.DownloadManifest, sem chan struct{}) {
 	var wg sync.WaitGroup
 	var firstError error
-	wg.Add(d.NumParts)
+	wg.Add(d.Parameters.NumParts)
 
-	speeds := make([]atomic.Value, d.NumParts)
-	for i := 0; i < d.NumParts; i++ {
+	speeds := make([]atomic.Value, d.Parameters.NumParts)
+	for i := 0; i < d.Parameters.NumParts; i++ {
 		speeds[i] = atomic.Value{}
 		speeds[i].Store("0 KB/s")
-		go d.DownloadPart(client, i, rangeSize, size, sem, maxProgressbarNameLen, progressbarName, progressBars, partFilesHashes, speeds[i], downloadManifest, &wg)
+		progressbar.Speed = speeds[i]
+		go d.DownloadPart(client, i, sem, progressbar, partFilesHashes, downloadManifest, &wg)
 	}
 
 	go func() {
@@ -444,17 +516,19 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 		return manifest.DownloadManifest{}, nil, 0, "", "", 0, "", err
 	}
 
-	downloadManifest := d.InitDownloadManifest(fileName, fileHash, etag, hashType, size, size/d.NumParts)
+	downloadManifest := d.InitDownloadManifest(fileName, fileHash, etag, hashType, size, size/d.Parameters.NumParts)
 
-	maxProgressbarNameLen, speed, progressbarName := d.InitUI()
+	progressbarMaxNameLen, progressbarSpeed, progressbarName := d.InitUI()
 
 	uiprogress.Start()
 
-	progressBars := make([]*uiprogress.Bar, d.NumParts)
-	partFilesHashes := make([]string, d.NumParts)
-	sem := make(chan struct{}, d.MaxConcurrentConnections)
+	progressBars := make([]*uiprogress.Bar, d.Parameters.NumParts)
+	partFilesHashes := make([]string, d.Parameters.NumParts)
+	sem := make(chan struct{}, d.Parameters.MaxConcurrentConnections)
 
-	d.ManagePartDownload(client, size, size/d.NumParts, maxProgressbarNameLen, progressbarName, progressBars, partFilesHashes, speed, &downloadManifest, sem)
+	progressbar := NewProgressbar(size/d.Parameters.NumParts, progressbarMaxNameLen, progressbarName, progressBars, size, progressbarSpeed)
+
+	d.ManagePartDownload(client, progressbar, partFilesHashes, &downloadManifest, sem)
 
 	uiprogress.Stop()
 
@@ -462,15 +536,15 @@ func (d *Downloader) DownloadPartFiles(hashes map[string]string) (manifest.Downl
 	if ok {
 		return manifest.DownloadManifest{}, nil, 0, "", "", 0, "", firstError
 	} else {
-		fmt.Println("No errors received from goroutine")
+		d.Log.Infow("No errors received from goroutine")
 	}
 
-	return downloadManifest, partFilesHashes, size, etag, hashType, size/d.NumParts, fileName, nil
+	return downloadManifest, partFilesHashes, size, etag, hashType, size/d.Parameters.NumParts, fileName, nil
 }
 
 
 func (d *Downloader) GetFileInfo(client *http.Client) (size int, etag string, hashType string, err error) {
-	req, err := http.NewRequest("HEAD", d.URLFile, nil)
+	req, err := http.NewRequest("HEAD", d.Parameters.URLFile, nil)
 	if err != nil {
 		return 0, "", "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -521,7 +595,7 @@ func (d *Downloader) ValidateInput(urlFile string, downloadOnly bool) error {
 }
 
 func (d *Downloader) ObtainShaSumsHashes(f *fileutils.Fileutils, shaSumsURL string) (map[string]string, error) {
-	h := hasher.NewHasher(d.PartsDir, d.PrefixParts, d.Log)
+	h := hasher.NewHasher(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Log)
 	hashes, err := d.InitDownloadAndParseHashFile(h, shaSumsURL)
 	if err != nil {
 		return make(map[string]string), fmt.Errorf("failed to download and parse shasum file: %w", err)
@@ -545,7 +619,7 @@ func (d *Downloader) ProcessHash(f *fileutils.Fileutils, partsDir string, prefix
 }
 
 func (d *Downloader) FilePathAndValidation(outputFile string) (string, error) {
-	f := fileutils.NewFileutils(d.PartsDir, d.PrefixParts, d.Log)
+	f := fileutils.NewFileutils(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Log)
 
 	// Validate the path of output file
 	message, err := f.ValidatePath(outputFile)
@@ -581,14 +655,17 @@ func (d *Downloader) SaveManifest(m *manifest.Manifest, downloadManifest manifes
 }
 
 func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryption, f *fileutils.Fileutils, partFilesHashes []string, fileName string, hash string) ([]byte, string, error) {
-	key, err := e.CreateEncryptionKey(partFilesHashes)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to obtain the encryption key: %w", err)
-	}
-
+	d.Log.Debugw("Handling encrypted manifest file")
 	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to obtain the path of the downloaded manifest: %w", err)
+	}
+
+	fmt.Print("manifestPath: ", manifestPath, "\n")
+
+	key, err := e.CreateEncryptionKey(manifestPath, partFilesHashes, true)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to obtain the encryption key: %w", err)
 	}
 
 	if f.PathExists(manifestPath + ".enc") {
@@ -607,9 +684,12 @@ func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryp
 }
 
 func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts string, urlFile string, downloadOnly bool, outputFile string) (manifest.DownloadManifest, map[string]string, string, []byte, int, int, string, string, error) {
-	e := encryption.NewEncryption(d.PartsDir, d.PrefixParts, d.Log)
-	f := fileutils.NewFileutils(d.PartsDir, d.PrefixParts, d.Log)
-	m := manifest.NewManifest(d.PartsDir, d.PrefixParts, d.Log)
+	dbInitializer := &initdb.DBInitImpl{}
+	fuInitializer := &fileutils.FileUtilsInitImpl{}
+
+	e := encryption.NewEncryption(d.DBConfig, dbInitializer, fuInitializer, d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Parameters.Timestamp, d.Log)
+	f := fileutils.NewFileutils(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Log)
+	m := manifest.NewManifest(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Parameters.Timestamp, d.Log)
 
 	err := d.ValidateInput(urlFile, downloadOnly)
     if err != nil {
@@ -640,7 +720,7 @@ func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts st
 
     key, manifestPath, err := d.HandleEncryption(m, e, f, partFilesHashes, fileName, hash)
     if err != nil {
-        return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to handle ecrypted manifest file: %w", err)
+        return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to handle encrypted manifest file: %w", err)
     }
 
 	if downloadOnly {

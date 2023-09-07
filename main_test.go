@@ -118,7 +118,7 @@ func (m *MockedAssembler) NewAssembler(numParts int, partsDir string, keepParts 
 // 	md.SetLogger(ml)  
 
 // 	// Assuming AppConfig doesn't need mocking and it's just configuration
-// 	cfg := &AppConfig{
+// 	cfg := &config.AppConfig{
 // 		// ... populate needed fields here ...
 // 		maxConcurrentConnections: viper.GetInt("max-connections"),
 // 		shaSumsURL 				: viper.GetString("sha-sums"),

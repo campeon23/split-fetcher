@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/logger"
@@ -17,6 +18,7 @@ import (
 type Manifest struct {
 	PartsDir		string
 	PrefixParts		string
+	TimeStamp		int64
 	Log				logger.LoggerInterface
 }
 
@@ -44,10 +46,11 @@ type DownloadedPart struct {
 	PartFile   string `json:"part_file"`
 }
 
-func NewManifest(partsDir string, prefixParts string, log logger.LoggerInterface) *Manifest {
+func NewManifest(partsDir string, prefixParts string, timestamp int64, log logger.LoggerInterface) *Manifest {
 	return &Manifest{
 		PartsDir: partsDir,
 		PrefixParts: prefixParts,
+		TimeStamp: timestamp,
 		Log: log,
 	}
 }
@@ -72,7 +75,7 @@ func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string
 		path = filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader")
 	}
 
-	return filepath.Join(path, fileName+".manifest." + hash + ".json"), nil
+	return filepath.Join(path, fileName+".manifest." + hash + "-" + strconv.FormatInt(m.TimeStamp, 10) + ".json"), nil
 }
 
 func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName string, hash string) error {
@@ -92,20 +95,20 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName stri
 
 	// Debugging: Check if the directory was created
 	if f.PathExists(manifestDir) {
-		m.Log.Debugw("Application Directory created successfully", "directory", manifestDir)
+		m.Log.Debugw("Application Directory created successfully", "directory", filepath.Base(manifestDir))
 	} else {
-		m.Log.Warnw("Directory not found", "directory", manifestDir)
+		m.Log.Warnw("Directory not found", "directory", filepath.Base(manifestDir))
 	}
 
 	// Before saving the manifest file, check if the file exists and delete it
 	if f.PathExists(manifestPath) {
-		m.Log.Debugw("Manifest file exists. Deleting:", "file", manifestPath)
+		m.Log.Debugw("Manifest file exists. Deleting:", "file", filepath.Base(manifestPath))
 		err := os.Remove(manifestPath)
 		if err != nil {
 			return errors.New("Error deleting manifest file: " + err.Error())
 		}
 	} else {
-		m.Log.Debugw("Manifest file not found", "file: ", manifestPath)
+		m.Log.Debugw("Manifest file not found", "file: ", filepath.Base(manifestPath))
 	}
 
 	file, err := os.Create(manifestPath)
@@ -116,9 +119,9 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName stri
 
 	// Debugging: Check if the file was created
 	if _, err := os.Stat(manifestPath); err == nil {
-		m.Log.Debugw("File created successfully", "file", manifestPath)
+		m.Log.Debugw("File created successfully", "file", filepath.Base(manifestPath))
 	} else {
-		m.Log.Warnw("File not found", "file", manifestPath)
+		m.Log.Warnw("File not found", "file", filepath.Base(manifestPath))
 	}
 
 	encoder := json.NewEncoder(file)

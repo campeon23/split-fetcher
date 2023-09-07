@@ -36,6 +36,13 @@ jobs:
         with:
           version: latest
           only-new-issues: false
+
+      # Install gopls
+      - name: Install gopls
+        uses: golang/tools/gopls@v0.13.0
+        with:
+          version: latest
+          only-new-issues: false
           
       - name: Set up Go
         uses: actions/setup-go@v2

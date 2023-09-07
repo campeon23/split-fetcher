@@ -1,0 +1,12 @@
+{
+	"buildFlags": [
+		"-tags=windows"
+	],
+	"usePlaceholders": true,
+	"hoverKind": "FullDocumentation",
+	"staticcheck": false,
+	"environments": [{
+		"name": "unix",
+		"buildFlags": ["-tags=linux,darwin"]
+	}]
+}

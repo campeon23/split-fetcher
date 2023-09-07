@@ -1,0 +1,2 @@
+DB_DIR: "database"
+DB_FILENAME: "encrypteddb.db"

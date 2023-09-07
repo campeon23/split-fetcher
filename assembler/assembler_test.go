@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const partsDirTemp = "./testdata"
+const prefixPartsTemp = "part_"
+
 // Mock logger for our tests
 type MockLogger struct {
 	*logger.Logger  // Embedding
@@ -22,15 +25,22 @@ func (l *MockLogger) Infow(msg string, keysAndValues ...interface{}) {
 	// Your mock implementation. For instance, just print them.
 	fmt.Println("Mocked Infow:", msg, keysAndValues)
 }
-func (l *MockLogger) Debugw(msg string, keysAndValues ...interface{}) {}
-func (l *MockLogger) Fatalw(msg string, keysAndValues ...interface{}) {}
+func (l *MockLogger) Debugw(msg string, keysAndValues ...interface{}) {
+	// Your mock implementation. For instance, just print them.
+	fmt.Println("Mocked Debugw:", msg, keysAndValues)
+}
+func (l *MockLogger) Fatalw(msg string, keysAndValues ...interface{}) {
+	// Your mock implementation. For instance, just print them.
+	fmt.Println("Mocked Fatalw:", msg, keysAndValues)
+}
 
 func TestAssembleFileFromParts(t *testing.T) {
-	partsDir := "test_data_tmp"
-	prefixParts := "part_"
+	partsDir := partsDirTemp
+	prefixParts := prefixPartsTemp
+	timestamp := 1693492459594999000
 
 	l := logger.InitLogger(true)
-	a := NewAssembler(3, partsDir, false, prefixParts, l)
+	a := NewAssembler(3, partsDir, false, prefixParts, int64(timestamp),l)
 	h := hasher.NewHasher(partsDir, prefixParts, l)
 
 	currentDir, err := os.Getwd()
@@ -76,10 +86,11 @@ func TestAssembleFileFromParts(t *testing.T) {
 }
 
 func TestPrepareAssemblyEnvironment(t *testing.T) {
-	partsDir := "./testdata"
-	prefixParts := "part_"
+	partsDir := partsDirTemp
+	prefixParts := prefixPartsTemp
+	timestamp := 1693492459594999000
 	l := logger.InitLogger(true)
-	a := NewAssembler(3, "./testdata", false, "part_", l)
+	a := NewAssembler(3, partsDirTemp, false, prefixPartsTemp, int64(timestamp), l)
 
 	// Mock manifest content
 	manifestContent := []byte(`{"partsDir": "./testdata", "prefixParts": "part_"}`)
@@ -88,8 +99,8 @@ func TestPrepareAssemblyEnvironment(t *testing.T) {
 	defer os.Remove(outFile.Name())
 
 	assert.NoErrorf(t, err, "Failed to prepare assembly environment: %v", err)
-	assert.Equal(t, "./testdata", partsDir)
-	assert.Equal(t, "part_", prefixParts)
+	assert.Equal(t, partsDirTemp, partsDir)
+	assert.Equal(t, prefixPartsTemp, prefixParts)
 }
 
 // Additional tests can be written to simulate errors and check edge cases.
