@@ -19,6 +19,12 @@ multi-source-downloader
 
 # Build Directories
 Final
+amd64
+final
+
+# Development Directories
+downloads
+debug
 
 # Certs
 certs
@@ -46,13 +52,10 @@ bak.*
 # Compressed files
 *.tar.*
 
+# Database files
+*.db
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
-
-# Go workspace file
-go.work
-
-# Config directories
-*/config/
 
 dist/

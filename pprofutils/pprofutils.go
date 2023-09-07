@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/pprof"
-	_ "net/http/pprof"
 	"net/url"
 	"os"
 	"path"
@@ -34,26 +33,20 @@ type PprofUtils struct {
 	Server 		Server
 	SecretToken string
 	PprofPort 	string
-	CertPath 	string
-	KeyPath 	string
 	BaseURL		string
 	EnablePprof	bool
 	wg      	sync.WaitGroup
 	errChMu 	sync.Mutex // Add a mutex for synchronizing error channel writes
 }
 
-func NewPprofUtils(enablePprof bool, pprofPort string, secretToken string, certPath string, keyPath string, baseURL string, log logger.LoggerInterface, errCh chan error) *PprofUtils {
+func NewPprofUtils(enablePprof bool, pprofPort string, secretToken string, baseURL string, log logger.LoggerInterface, errCh chan error) *PprofUtils {
 	return &PprofUtils{
 		SecretToken:	secretToken,
 		PprofPort:		pprofPort,
-		CertPath:		certPath,
-		KeyPath:		keyPath,
 		BaseURL:		baseURL,
 		EnablePprof:	enablePprof,
-		// router :		mux.NewRouter(),
 		Server: &http.Server{
 			Addr: pprofPort,
-			// Handler: router,
 		},
 		Log: log,
 		ErrCh: 			errCh, // Initialize error channel
@@ -62,17 +55,6 @@ func NewPprofUtils(enablePprof bool, pprofPort string, secretToken string, certP
 
 func (p *PprofUtils) SetLogger(log logger.LoggerInterface) {
     p.Log = log
-}
-
-func LoadConfig(configName string, configPath string) error {
-    viper.SetConfigName(configName) // Name of config file (without extension)
-    viper.AddConfigPath(configPath) // Path to look for the config file in
-
-    err := viper.ReadInConfig() // Find and read the config file
-    if err != nil { // Handle errors reading the config file
-        return fmt.Errorf("fatal error config file: %w", err)
-    }
-	return nil
 }
 
 // Add middleware for pprof routes authentication
@@ -183,7 +165,7 @@ func (p *PprofUtils) StartServerWithShutdown(addr string, certPath string, keyPa
 	return p.ErrCh
 }
 
-func (p *PprofUtils) StartPprof() chan error {
+func (p *PprofUtils) StartPprof(certPath string, keyPath string) chan error {
 	p.wg.Add(1)
 
 	p.Log.Debugw("Starting pprof server", "port", p.PprofPort)
@@ -205,7 +187,7 @@ func (p *PprofUtils) StartPprof() chan error {
 		}
 		
 		// Start the HTTP server with graceful shutdown using TLS
-		serverErrCh := p.StartServerWithShutdown(p.PprofPort, p.CertPath, p.KeyPath, &RealKeyPressReader{})
+		serverErrCh := p.StartServerWithShutdown(p.PprofPort, certPath, keyPath, &RealKeyPressReader{})
 		// If server encounters error, pass it to our errCh
 		select {
 		case err := <-serverErrCh:
@@ -254,6 +236,15 @@ func (p *PprofUtils) DumpDebugPProf() error {
 		fileName = path.Base(parsedURL.Path)
 	}
 
+	err = p.visitedLinkFind(c, u, fileName)
+	if err != nil {
+		return fmt.Errorf("error visiting link: %v", err)
+	}
+
+	return nil
+}
+
+func (p *PprofUtils) visitedLinkFind(c *colly.Collector, u *utils.Utils, fileName string) error {
 	// Callback when a visited link is found
 	c.OnHTML("a[href]", func(t *colly.HTMLElement) {
 		link := t.Attr("href")
@@ -276,36 +267,7 @@ func (p *PprofUtils) DumpDebugPProf() error {
 		}
 		defer resp.Body.Close()
 
-		var reader io.Reader = resp.Body
-		contentType := resp.Header.Get("Content-Type")
-
-		// If the content is gzip compressed, then decompress it
-		if resp.Header.Get("Content-Encoding") == "gzip" {
-			gzipReader, err := gzip.NewReader(resp.Body)
-			if err != nil {
-				p.Log.Errorf("error creating gzip reader: %v", err)
-				return
-			}
-			defer gzipReader.Close()
-			reader = gzipReader
-		}
-
-		// Read response body
-		data, err := io.ReadAll(reader)
-		if err != nil {
-			p.Log.Errorf("error reading response body: %v", err)
-			return
-		}
-
-		// Check if the content type is binary
-		switch contentType {
-			case "application/octet-stream":
-				p.Log.Debugf("Warning: Saving binary profile data for %s", link)
-			case "text/plain; charset=utf-8":
-				p.Log.Debugf("Warning: Saving text/plain profile data for %s", link)
-			default:
-				p.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
-		}
+		data := p.validateContent(resp, link)
 
 		resource, dumpType, value, err := u.ParseLink(link)
 		if err != nil {
@@ -327,9 +289,43 @@ func (p *PprofUtils) DumpDebugPProf() error {
 			"file", dumpName,
 		)
 	})
-	err = c.Visit(p.BaseURL)
+	err := c.Visit(p.BaseURL)
 	if err != nil {
 		return fmt.Errorf("error visiting %s: %v", p.BaseURL, err)
 	}
 	return nil
+}
+
+func (p *PprofUtils) validateContent(resp *http.Response, link string) []byte {
+	var reader io.Reader = resp.Body
+		contentType := resp.Header.Get("Content-Type")
+
+		// If the content is gzip compressed, then decompress it
+		if resp.Header.Get("Content-Encoding") == "gzip" {
+			gzipReader, err := gzip.NewReader(resp.Body)
+			if err != nil {
+				p.Log.Errorf("error creating gzip reader: %v", err)
+				return nil
+			}
+			defer gzipReader.Close()
+			reader = gzipReader
+		}
+
+		// Read response body
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			p.Log.Errorf("error reading response body: %v", err)
+			return nil
+		}
+
+		// Check if the content type is binary
+		switch contentType {
+			case "application/octet-stream":
+				p.Log.Debugf("Warning: Saving binary profile data for %s", link)
+			case "text/plain; charset=utf-8":
+				p.Log.Debugf("Warning: Saving text/plain profile data for %s", link)
+			default:
+				p.Log.Debugf("Warning: Unknown content type %s for %s", contentType, link)
+		}
+		return data
 }

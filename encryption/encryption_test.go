@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -13,11 +14,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/campeon23/multi-source-downloader/database/initdb"
+	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/stretchr/testify/assert"
 )
 
 const testfile = "testfile.txt"
+const testSalt = "test-salt"
 
 type MockLogger struct {
 	InfoLogs  []string
@@ -29,12 +33,181 @@ type MockLogger struct {
 	SyncCalls int
 }
 
-type MockFileOps struct {
-	data 		[]byte
-	dataMap 	map[string][]byte
-	err 		error
-	tempFiles 	[]*os.File
-	writtenData  []byte
+type MockDB struct {
+	Init 			*initdb.InitDB
+	Salts  			map[int64][]byte  // Store salts with timestamp as key
+    FailOnStore		bool
+	InitializeFunc	func(password string) (*sql.DB, error)
+}
+type MockDBConfig struct{
+	Log logger.LoggerInterface
+}
+type MockDBInit struct {
+    MockDB initdb.DBInterface
+}
+type MockDBConn struct{
+	MockDB *MockDB
+}
+type MockDBInitializer struct{}
+type MockDBConfigInterface interface {
+	GetDB() 		*sql.DB
+    GetDBDir() 		string
+    GetDBFilename() string
+    GetDBPassword() string
+    GetConfigName() string
+    GetConfigPath() string
+    GetLog() 		logger.LoggerInterface
+}
+
+type MockFileUtils struct{}
+type MockFile struct{
+	File *fileutils.Fileutils
+}
+type MockFileOps	struct {
+	data 			[]byte
+	dataMap 		map[string][]byte
+	err 			error
+	tempFiles 		[]*os.File
+	writtenData  	[]byte
+}
+
+func NewMockDB() *MockDB {
+    return &MockDB{
+        Salts: make(map[int64][]byte),
+        FailOnStore: false,
+        InitializeFunc: func(password string) (*sql.DB, error) {
+            // return nil, nil
+			// Using an in-memory SQLite database for the mock
+    		return sql.Open("sqlite3", ":memory:")
+        },
+    }
+}
+
+func (db *MockDBInit) NewInitDB(dbDir string, dbFilename string, log logger.LoggerInterface) initdb.DBInterface {
+    return db.MockDB
+}
+
+
+
+func (m *MockDBConn) Exec(query string, args ...interface{}) (sql.Result, error) {
+	// Simulate faliure if the FailOnStore flag is true
+	if m.MockDB.FailOnStore {
+        return nil, fmt.Errorf("Simulated failure")
+    }
+
+    // Simulate storing salt in mock DB
+    saltValue, ok1 := args[0].([]byte)
+    timestamp, ok2 := args[1].(int64)
+
+    if ok1 && ok2 {
+        m.MockDB.Salts[timestamp] = saltValue
+        return nil, nil  // Or you could return a mock result
+    }
+
+    return nil, fmt.Errorf("Invalid arguments")
+}
+
+func (db *MockDBConfig) GetDB() *sql.DB {
+    return nil
+}
+
+func (db *MockDBConfig) GetDBDir() string {
+    return ".database/"
+}
+func (db *MockDBConfig) GetDBFilename() string {
+    return "database.db"
+}
+func (db *MockDBConfig) GetDBPassword() string {
+    return "test123"
+}
+func (db *MockDBConfig) GetConfigName() string {
+    return "config"
+}
+func (db *MockDBConfig) GetConfigPath() string {
+    return "./database/config"
+}
+func (db *MockDBConfig) GetLog() logger.LoggerInterface {
+    return db.Log
+}
+
+// Implement the interface methods with mocked behaviors.
+func (db *MockDBInitializer) NewInitDB(dir string, filename string, log logger.LoggerInterface) initdb.DBInterface {
+    return &MockDB{}
+	// return NewMockDB()
+}
+
+func (db *MockFileUtils) NewFileutils(partsDir string, prefixParts string, log logger.LoggerInterface) fileutils.FileInterface {
+	return &MockFile{}
+}
+
+func (db *MockDB) Initialize(password string) (*sql.DB, error) {
+	// return nil, nil
+	return db.InitializeFunc(password)
+}
+
+func (db *MockDB) CreateSaltTable(database *sql.DB) error {
+	return nil
+}
+
+func (dbc *MockDBConn) CreateSaltTable(database *sql.DB) error {
+	return dbc.MockDB.CreateSaltTable(database)
+}
+
+func (db *MockDB) StoreSalt(database initdb.SQLExecer, salt []byte, timestamp int64) error {
+    // Simulate a failure if the FailOnStore flag is true
+    if db.FailOnStore {
+        return fmt.Errorf("mocked error: failed to store salt in database")
+    }
+    
+    // Mock implementation: Store salt in our mock database (i.e., map)
+    db.Salts[timestamp] = salt
+    
+    return nil
+}
+
+func (dbc *MockDBConn) StoreSalt(database initdb.SQLExecer, salt []byte, timestamp int64) error {  
+    return dbc.MockDB.StoreSalt(database, salt, timestamp)
+}
+
+
+func (db *MockDB) RetrieveSaltByTimestamp(database *sql.DB, timestamp int64) ([]byte, error) {
+	return []byte("mocksalt"), nil
+}
+
+func (dbc *MockDBConn) RetrieveSaltByTimestamp(database *sql.DB, timestamp int64) ([]byte, error) {
+	return dbc.MockDB.RetrieveSaltByTimestamp(database, timestamp)
+}
+
+func (db *MockDB) RetrieveSaltByTimestampFail(database *sql.DB, timestamp int64) ([]byte, error) {
+	return nil, fmt.Errorf("mocked error: failed to retrieve salt from database")
+}
+
+func (db *MockDB) CreateTimestampIndex(database *sql.DB) error {
+	return nil
+}
+
+func (dbc *MockDBConn) CreateTimestampIndex(database *sql.DB) error {
+	return dbc.MockDB.CreateTimestampIndex(database)
+}
+
+
+func (db *MockDB) CheckEncrypted(dir, filename string) (bool, error) {
+	return false, nil
+}
+
+func (dbc *MockDBConn) CheckEncrypted(dir, filename string) (bool, error) {
+    // Add your mock logic here.
+    // For a basic mock, just return a predetermined value or error.
+    return dbc.MockDB.CheckEncrypted(dir, filename)
+}
+
+func (fl *MockFile) PathExists(path string) bool {
+	return true
+}
+
+func (m *MockFileOps) WriteFile(filename string, data []byte, perm os.FileMode) error {
+	m.dataMap[filename] = data
+	return m.err
 }
 
 func (m *MockFileOps) GetWrittenData() []byte {
@@ -136,11 +309,6 @@ func (m *MockFileOps) Open(name string) (*os.File, error) {
     return tmpfile, nil
 }
 
-func (m *MockFileOps) WriteFile(filename string, data []byte, perm os.FileMode) error {
-	m.dataMap[filename] = data
-	return m.err
-}
-
 func EncryptAndComputeHMAC(key []byte, data []byte) ([]byte, []byte) {
 	// Add padding to the mock encrypted data
 	mockPadding := []byte{4, 4, 4, 4}
@@ -177,20 +345,85 @@ func (m *MockFileOps) WriteDecryptedFile(filename string, key []byte, data []byt
     return m.err
 }
 
+func TestNewEncryption(t *testing.T) {
+	mockLog := &MockLogger{}
+	mockDBConfig := &MockDBConfig{Log: mockLog}
+	mockDBInitializer := &MockDBInitializer{}
+	mockFileUtils := &MockFileUtils{}
+
+	enc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, "partsDir", "prefixParts", 1234567890, mockLog)
+
+	// Basic assertions
+	assert.NotNil(t, enc)
+	assert.NotNil(t, enc.DB)
+	assert.NotNil(t, enc.FileOps)
+	assert.Equal(t, "partsDir", enc.PartsDir)
+	assert.Equal(t, "prefixParts", enc.PrefixParts)
+	assert.Equal(t, int64(1234567890), enc.Timestamp)
+	assert.Equal(t, mockLog, enc.Log)
+}
+
+func TestStoreSalt(t *testing.T) {
+	mockLog := &MockLogger{}
+	mockDBConfig := &MockDBConfig{Log: mockLog}
+	mockDB := NewMockDB()
+	mockDBInitializer := &MockDBInit{MockDB: mockDB}
+	mockFileUtils := &MockFileUtils{}
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, "partsDir", "prefixParts", 1234567890, mockLog)
+
+	// This is a mock database connection, so you don't have a real sql.DB here
+	// The actual instance doesn't matter as our mock implementation doesn't use it
+	mockDBConn := &MockDBConn{MockDB: mockDB}
+
+	err := mockEnc.DB.StoreSalt(mockDBConn, []byte(testSalt), 1234567890)
+
+	// Validate the salt was stored
+	assert.NoError(t, err)
+	salt, exists := mockDB.Salts[1234567890]
+	assert.True(t, exists)
+	assert.Equal(t, []byte(testSalt), salt)
+}
+
+func TestStoreSaltFail(t *testing.T) {
+	mockLog := &MockLogger{}
+	mockDBConfig := &MockDBConfig{Log: mockLog}
+	mockDB := NewMockDB()
+	mockDB.FailOnStore = true // Set this to simulate a failure
+	mockDBInitializer := &MockDBInit{MockDB: mockDB}
+	mockFileUtils := &MockFileUtils{}
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, "partsDir", "prefixParts", 1234567890, mockLog)
+
+	// Simulate a failure
+	mockDB.FailOnStore = true
+
+	// This is a mock database connection, so you don't have a real sql.DB here
+	// The actual instance doesn't matter as our mock implementation doesn't use it
+	mockDBConn := &MockDBConn{MockDB: mockDB}
+
+	err := mockEnc.DB.StoreSalt(mockDBConn, []byte(testSalt), 1234567890)
+
+	// Check that the error was thrown
+	assert.Error(t, err)
+}
+
 func TestCreateEncryptionKey(t *testing.T) {
 	partsDir := "test_data_tmp"
 	prefixParts := "part_"
+	timestamp := 1693482477127354000
+	manifestTempFile := "testfile-1693482477127354000.json.enc"
 
-	e := NewEncryption("", "", nil) // Adjust as needed
-	l := logger.InitLogger(true)
+	// Use the mock DB for this test
+	mockLog := &MockLogger{}
+	mockDBConfig := &MockDBConfig{Log: mockLog}
+	mockDB := NewMockDB()
+	mockDBInitializer := &MockDBInit{MockDB: mockDB}
+	mockFileUtils := &MockFileUtils{}
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, partsDir, prefixParts, int64(timestamp), mockLog)
 
-	currentDir, err := os.Getwd()
-	assert.NoErrorf(t, err, "Failed to get current dir: %v", err)
+	// This is a mock database connection, so you don't have a real sql.DB here
+	// The actual instance doesn't matter as our mock implementation doesn't use it
 
-	e.PartsDir = currentDir + string(os.PathSeparator) + partsDir
-	e.PrefixParts = prefixParts
-
-	err = os.Mkdir(partsDir, 0755)
+	err := os.Mkdir(partsDir, 0755)
 	assert.NoErrorf(t, err, "Failed to create test directory: %v", err)
 	defer os.RemoveAll(partsDir) // Cleanup
 
@@ -204,20 +437,53 @@ func TestCreateEncryptionKey(t *testing.T) {
 		tempFile.Close()
 	}
 
-	key, err := e.CreateEncryptionKey(strings)
+	key, err := mockEnc.CreateEncryptionKey(manifestTempFile, strings, true)
+	assert.NoErrorf(t, err, "Failed to create encryption key (TestCreateEncryptionKey): %v", err)
 
-	l.Debugf("key: %v", key)
-
-	assert.NoErrorf(t, err, "Failed to create encryption key: %v", err)
+	// Assertions based on the new logic:
 	assert.NotNil(t, key)
 	assert.Equal(t, 32, len(key))
+
+	// If you want to also validate the generated key against some expected value, add that logic as well.
+	// Note: Given the random nature of salt generation, this might be complex. You may want to mock the salt generation or focus only on other aspects of the function for deterministic outcomes.
+}
+
+func TestCreateEncryptionKeyWithEncFuncFalse(t *testing.T) {
+	partsDir := "test_data_tmp"
+	prefixParts := "part_"
+	timestamp := 1693482477127354000
+	manifestTempFile := "testfile-1693482477127354000.json.enc"
+
+	// Use the mock DB for this test
+	mockLog := &MockLogger{}
+	mockDBConfig := &MockDBConfig{Log: mockLog}
+	mockDB := NewMockDB()
+	mockDBInitializer := &MockDBInit{MockDB: mockDB}
+	mockFileUtils := &MockFileUtils{}
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, partsDir, prefixParts, int64(timestamp), mockLog)
+
+
+	// Create temp files
+	strings := []string{"test1", "test2", "test3"}
+
+	key, err := mockEnc.CreateEncryptionKey(manifestTempFile, strings, false)
+	assert.NoErrorf(t, err, "Failed to create encryption key: %v", err)
+
+	// Assertions based on the new logic:
+	assert.NotNil(t, key)
+	assert.Equal(t, 32, len(key))
+
+	// Again, add any additional logic or assertions to validate the outcome based on the mocked behaviors
 }
 
 func TestEncryptFileAndDecryptFile(t *testing.T) {
 	partsDir := "test_data_tmp"
 
+	dbi := &MockDBInitializer{}
+	fui := &MockFileUtils{}
+
 	l := logger.InitLogger(true)
-	e := NewEncryption("", "", l) // Adjust as needed
+	e := NewEncryption(nil, dbi, fui, "", "", 0, l) // Adjust as needed
 	
 	currentDir, err := os.Getwd()
 	assert.NoErrorf(t, err, "Failed to get current dir: %v", err)
@@ -278,22 +544,21 @@ func TestMockFileOps(t *testing.T) {
     }
 
     key := make([]byte, 32)    // Making a dummy key
-    rand.Read(key)
+    _, err := rand.Read(key)
+	assert.Nil(t, err, "failed to generate random key (TestMockFileOps): %v", err)
+
     data := []byte("Test data to be encrypted")
 
-    err := mock.WriteEncryptedFile(testfile, key, data, 0644)
-    if err != nil {
-        t.Fatal(err)
-    }
+    err = mock.WriteEncryptedFile(testfile, key, data, 0644)
+	assert.NoError(t, err, "failed to write encrypted file")
 
-    if bytes.Equal(mock.dataMap[testfile+".enc"], data) {
-        t.Fatalf("Expected different data in the mock, got the same")
-    }
+	assert.False(t, bytes.Contains(mock.dataMap[testfile+".enc"], data), "Expected different data in the mock, got the same")
 }
 
 func TestEncryptionLogic(t *testing.T) {
     key := make([]byte, 32)
-    rand.Read(key)
+    _, err := rand.Read(key)
+	assert.Nil(t, err, "failed to generate random key (TestEncryptionLogic): %v", err)
     
 
 	
@@ -313,27 +578,22 @@ func TestEncryptionLogic(t *testing.T) {
 		FileOps: mockFileOps,
 	}
 
-	err := mockFileOps.WriteEncryptedFile(testfile, key, plaintext, 0644)
+	err = mockFileOps.WriteEncryptedFile(testfile, key, plaintext, 0644)
     assert.Nil(t, err)
 
     err = e.EncryptFile(testfile, key)
-    if err != nil {
-        t.Fatal(err)
-    }
+	assert.NoError(t, err, "failed to encrypt mock manifest.")
 
     encryptedData, err := e.FileOps.ReadFile(testfile+".enc")
-    if err != nil {
-        t.Fatal(err)
-    }
+	assert.NoError(t, err, "failed to read the encrypt mock manifest.")
 
-    if bytes.Contains(encryptedData, plaintext) {
-        t.Fatalf("Encrypted data should not contain plaintext")
-    }
+	assert.False(t, bytes.Contains(encryptedData, plaintext), "Encrypted data should not contain plaintext")
 }
 
 func TestEncryptedDataSize(t *testing.T) {
     key := make([]byte, 32)
-    rand.Read(key)
+    _, err := rand.Read(key)
+	assert.Nil(t, err, "failed to generate random key (TestEncryptedDataSize): %v", err)
 
 	const testfile = testfile
 	// Initialize a mock logger for testing
@@ -352,23 +612,17 @@ func TestEncryptedDataSize(t *testing.T) {
 		FileOps: mockFileOps,
 	}
 
-	err := mockFileOps.WriteEncryptedFile(testfile, key, testContent, 0644)
+	err = mockFileOps.WriteEncryptedFile(testfile, key, testContent, 0644)
     assert.Nil(t, err)
 
     err = e.EncryptFile(testfile, key)
-    if err != nil {
-        t.Fatal(err)
-    }
+	assert.NoError(t, err, "failed to encrypt mock manifest.")
 
     encryptedData, err := e.FileOps.ReadFile(testfile+".enc")
-    if err != nil {
-        t.Fatal(err)
-    }
+	assert.NoError(t, err, "failed to read encrypted mock manifest.")
 
     expectedSize := 80
-    if len(encryptedData) != expectedSize {
-        t.Fatalf("Expected encrypted data of size %d bytes, got %d bytes", expectedSize, len(encryptedData))
-    }
+	assert.Equal(t, expectedSize, len(encryptedData), "Expected encrypted data of size %d bytes, got %d bytes", expectedSize, len(encryptedData))
 }
 
 func TestEncryptLogs(t *testing.T) {
@@ -377,7 +631,7 @@ func TestEncryptLogs(t *testing.T) {
 	// Assertions for logs
 	// Here, let's add assertions for the expected logs if necessary.
 	// You will need to implement the MockLogger and add methods to capture logs.
-	if len(mockLogger.InfoLogs) != 1 || mockLogger.InfoLogs[0] != "Initializing ecryption of manifest file." {
+	if len(mockLogger.InfoLogs) != 1 || mockLogger.InfoLogs[0] != "Initializing encryption of manifest file." {
 		assert.Empty(t, mockLogger.InfoLogs, "Unexpected info logs: %v", mockLogger.InfoLogs)
 	}
 	if len(mockLogger.DebugLogs) != 1 || !strings.Contains(mockLogger.DebugLogs[0], "File encrypted successfully and saved as.") {

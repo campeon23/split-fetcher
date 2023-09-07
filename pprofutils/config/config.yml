@@ -1,0 +1,4 @@
+PPROF_PORT: ":6060"
+CERT_PATH: "./certs/pprof_cert.pem"
+KEY_PATH: "./certs/pprof_key.pem"
+BASE_URL: "https://localhost:6060/debug/pprof/"

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,4 +137,23 @@ func (u *Utils) SanitizePath(path string) string {
 func (u *Utils) ZeroMemory(data []byte) {
     zero := make([]byte, len(data))
     copy(data, zero)
+}
+
+func (u *Utils) ExtractTimestampFromFilename(filename string) (int64, error) {
+	// Regular expression to match the timestamp pattern in the filename
+	re := regexp.MustCompile(`-(\d+).json.enc$`)
+	matches := re.FindStringSubmatch(filename)
+	
+	if len(matches) < 2 {
+		return 0, fmt.Errorf("timestamp not found in filename")
+	}
+
+	// Convert the timestamp string to int64
+	timestamp, err := strconv.ParseInt(matches[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+
+	fmt.Printf("timestamp from encrypted manifest: %d\n", timestamp)
+	return timestamp, nil
 }

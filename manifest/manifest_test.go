@@ -13,7 +13,7 @@ func TestGetDownloadManifestPath(t *testing.T) {
 	assert := assert.New(t)
 
 	l := logger.InitLogger(true)
-	m := NewManifest("", "", l)
+	m := NewManifest("", "", 0, l)
 
 	fileName := "example.txt"
 	hash := "samplehash"
@@ -29,7 +29,7 @@ func TestSaveAndExtractDownloadManifest(t *testing.T) {
 	assert := assert.New(t)
 
 	l := logger.InitLogger(true)
-	m := NewManifest("", "", l)
+	m := NewManifest("", "", 0, l)
 
 	manifest := DownloadManifest{
 		UUID: "sampleUUID",

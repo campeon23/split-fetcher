@@ -39,7 +39,7 @@ func (m *MockKeyPressReader) WaitForKeyPress() byte {
 
 func TestStartServerWithShutdown(t *testing.T) {
 	l := logger.InitLogger(true)
-	p := NewPprofUtils(true, ":6060", "mockToken", "mockCert", "mockKey", "mockBaseURL", l, make(chan error))
+	p := NewPprofUtils(true, ":6060", "mockToken", "mockBaseURL", l, make(chan error))
 	p.Server = &mockServer{} // Inject mock server
 
 	// Mock KeyPressReader to simulate 's' keypress immediately
