@@ -29,17 +29,15 @@ jobs:
       - name: Install Grype
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      # Install gopls
+      - name: Install gopls
+        run: |
+          go install golang.org/x/tools/gopls@latest
       
       # Install golangci-lint
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v2
-        with:
-          version: latest
-          only-new-issues: false
-
-      # Install gopls
-      - name: Install gopls
-        uses: golang/tools/gopls@v0.13.0
         with:
           version: latest
           only-new-issues: false
