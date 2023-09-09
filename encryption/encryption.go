@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +18,7 @@ import (
 	"github.com/campeon23/multi-source-downloader/fileutils"
 	"github.com/campeon23/multi-source-downloader/logger"
 	"github.com/campeon23/multi-source-downloader/utils"
-	"golang.org/x/crypto/pbkdf2"
+	"golang.org/x/crypto/argon2"
 )
 
 type Encryption struct {
@@ -176,7 +175,8 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 		}
 	}
 
-	key := pbkdf2.Key([]byte(buffer.Bytes()), salt, 4096, 32, sha256.New) // Pass the buffer as a byte slice
+	// key := pbkdf2.Key([]byte(buffer.Bytes()), salt, 4096, 32, sha256.New) // Pass the buffer as a byte slice
+	key := argon2.IDKey([]byte(buffer.Bytes()), salt, 8, 128*1024, 4, 32)
 	e.Log.Debugw("Encryption key generated successfully.")
 	return key, nil
 }
