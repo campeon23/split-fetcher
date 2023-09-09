@@ -2,10 +2,8 @@ package manifest
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -68,7 +66,7 @@ func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string
 	if runtime.GOOS == "windows" {
 		user, err := user.Current()
 		if err != nil {
-			return "", errors.New("Error fetching user information: " + err.Error())
+			return "", fmt.Errorf("error fetching user information: %w", err)
 		}
 		path = filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader")
 	} else {
@@ -78,19 +76,19 @@ func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string
 	return filepath.Join(path, fileName + "-manifest-" + hash + "-" + strconv.FormatInt(m.TimeStamp, 10) + ".json"), nil
 }
 
-func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName string, hash string) error {
+func (m *Manifest) DownloadManifestObject(manifest DownloadManifest, fileName string, hash string) ([] byte, error) {
 	f := fileutils.NewFileutils(m.PartsDir, m.PrefixParts, m.Log)
 	m.Log.Debugw("Initializing Config Directory")
 
 	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("error getting manifest path: %w", err)
 	}
 
 	// Ensure the directory exists
 	manifestDir := filepath.Dir(manifestPath)
 	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		return errors.New("Error creating config directory: " + err.Error())
+		return nil, fmt.Errorf("error creating config directory: %w", err)
 	}
 
 	// Debugging: Check if the directory was created
@@ -105,38 +103,18 @@ func (m *Manifest) SaveDownloadManifest(manifest DownloadManifest, fileName stri
 		m.Log.Debugw("Manifest file exists. Deleting:", "file", filepath.Base(manifestPath))
 		err := os.Remove(manifestPath)
 		if err != nil {
-			return errors.New("Error deleting manifest file: " + err.Error())
+			return nil, fmt.Errorf("error deleting manifest file: %w", err)
 		}
 	} else {
 		m.Log.Debugw("Manifest file not found", "file: ", filepath.Base(manifestPath))
 	}
 
-	file, err := os.Create(manifestPath)
+	encodedData, err := json.Marshal(manifest)
 	if err != nil {
-		return errors.New("Error creating manifest file: " + err.Error())
-	}
-	defer file.Close()
-
-	// Debugging: Check if the file was created
-	if _, err := os.Stat(manifestPath); err == nil {
-		m.Log.Debugw("File created successfully", "file", filepath.Base(manifestPath))
-	} else {
-		m.Log.Warnw("File not found", "file", filepath.Base(manifestPath))
+		return nil, fmt.Errorf("error encoding manifest JSON: %w", err)
 	}
 
-	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(manifest); err != nil {
-		return errors.New("Error encoding manifest JSON: " + err.Error())
-	}
-
-	// On Windows, make the file hidden
-	if runtime.GOOS == "windows" {
-		cmd := fmt.Sprintf("attrib +h %s", manifestPath)
-		if err := exec.Command("cmd", "/C", cmd).Run(); err != nil {
-			return errors.New("Error hiding manifest file: " + err.Error())
-		}
-	}
-	return nil
+	return encodedData, nil
 }
 
 func (m *Manifest) ExtractManifestFilePathFileName(outputFile string, manifestContent []byte) (DownloadManifest, string, string, error) {

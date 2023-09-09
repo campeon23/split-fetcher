@@ -646,15 +646,15 @@ func (d *Downloader) FilePathAndValidation(outputFile string) (string, error) {
 	return "", nil
 }
 
-func (d *Downloader) SaveManifest(m *manifest.Manifest, downloadManifest manifest.DownloadManifest, fileName string, hash string) error {
-	err := m.SaveDownloadManifest(downloadManifest, fileName, hash)
+func (d *Downloader) ManifestObject(m *manifest.Manifest, downloadManifest manifest.DownloadManifest, fileName string, hash string) ([]byte, error) {
+	contentData, err := m.DownloadManifestObject(downloadManifest, fileName, hash)
 	if err != nil {
-		return fmt.Errorf("failed updating the progress bar: %w", err)
+		return nil, fmt.Errorf("failed updating the progress bar: %w", err)
 	}
-	return nil
+	return contentData, nil
 }
 
-func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryption, f *fileutils.Fileutils, partFilesHashes []string, fileName string, hash string) ([]byte, string, error) {
+func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryption, f *fileutils.Fileutils, contentData []byte, partFilesHashes []string, fileName string, hash string) ([]byte, string, error) {
 	d.Log.Debugw("Handling encrypted manifest file")
 	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)
 	if err != nil {
@@ -674,7 +674,7 @@ func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryp
 		}
 	}
 
-	err = e.EncryptFile(manifestPath, key)
+	err = e.EncryptFile(manifestPath, contentData, key)
 	if err != nil {
 		return nil, "", fmt.Errorf("encrypting manifest file: %w", err)
 	}
@@ -711,12 +711,12 @@ func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts st
         }
     }
 
-    err = d.SaveManifest(m, downloadManifest, fileName, hash)
+    contentData, err := d.ManifestObject(m, downloadManifest, fileName, hash)
     if err != nil {
         return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to save manifest file: %w", err)
     }
 
-    key, manifestPath, err := d.HandleEncryption(m, e, f, partFilesHashes, fileName, hash)
+    key, manifestPath, err := d.HandleEncryption(m, e, f, contentData, partFilesHashes, fileName, hash)
     if err != nil {
         return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to handle encrypted manifest file: %w", err)
     }

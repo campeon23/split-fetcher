@@ -79,20 +79,23 @@ func (r *RealFileOps) WriteFile(filename string, data []byte, perm os.FileMode) 
 }
 
 func (r *RealFileOps) WriteEncryptedFile(filename string, data []byte, key []byte, perm os.FileMode) error {
+	e := NewEncryption(nil, nil, nil, "", "", 0, nil)
+	// Check key length for AES-256 (32 bytes)
 	if len(key) != 32 {  // Check key length for AES-256
 		return errors.New("key length must be 32 bytes for AES-256")
 	}
 
-	// Since EncryptFile uses the filename to read the file, 
-    // first write the data to the file and then call EncryptFile.
-	err := r.WriteFile(filename, data, perm)
+	contentData, err := e.FileOps.ReadFile(filename)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	err = r.Enc.EncryptFile(filename, key)
+	// Enhancing security by encrypting the data in memory first and 
+	// subsequently write the encrypted data directly to the disk. 
+	// This process minimizes the risk of exposing plaintext content.
+	err = r.Enc.EncryptFile(filename, contentData, key)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to encrypt file: %w", err)
 	}
 
 	return nil
@@ -175,21 +178,15 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 		}
 	}
 
-	// key := pbkdf2.Key([]byte(buffer.Bytes()), salt, 4096, 32, sha256.New) // Pass the buffer as a byte slice
-	key := argon2.IDKey([]byte(buffer.Bytes()), salt, 8, 128*1024, 4, 32)
+	key := argon2.IDKey([]byte(buffer.Bytes()), salt, 8, 128*1024, 4, 32) // Pass the buffer as a byte slice
 	e.Log.Debugw("Encryption key generated successfully.")
 	return key, nil
 }
 
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
-func (e *Encryption) EncryptFile(filename string, key []byte) error {
+func (e *Encryption) EncryptFile(filename string, contentData []byte, key []byte) error {
+	f := e.FUInitializer.NewFileutils(e.PartsDir, e.PrefixParts, e.Log)
 	e.Log.Infow("Initializing encryption of manifest file.")
-	
-
-	plaintext, err := e.FileOps.ReadFile(filename)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
-	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -209,7 +206,7 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 	}
 
 	// Create ciphertext with nonce prepended to it and append MAC to it as well
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+	ciphertext := gcm.Seal(nonce, nonce, contentData, nil)
 
 	encryptedFilename := filename + ".enc"
 	encryptedFile, err := e.FileOps.Create(encryptedFilename)
@@ -227,9 +224,11 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 		"encryptedFilename", filepath.Base(encryptedFilename),
 	)
 
-	err = e.FileOps.Remove(filename)
-	if err != nil {
-		return fmt.Errorf("cannot remove manifest: %w", err)
+	if f.PathExists(filename) {
+		err = e.FileOps.Remove(filename)
+		if err != nil {
+			return fmt.Errorf("cannot remove manifest: %w", err)
+		}
 	}
 
 	return nil
