@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -111,15 +110,12 @@ func (r *RealFileOps) WriteDecryptedFile(filename string, key []byte, data []byt
 
 // Generate a salt value
 func generateRandomSalt(length int) ([]byte, error) {
-    results := make([]byte, length)
-    for i := 0; i < length; i++ {
-        salt, err := rand.Int(rand.Reader, big.NewInt(255))
-        if err != nil {
-            return nil, err
-        }
-        results[i] = byte(salt.Int64())
-    }
-    return results, nil
+	salt := make([]byte, length)
+	_, err := io.ReadFull(rand.Reader, salt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate random salt: %w", err)
+	}
+	return salt, nil
 }
 
 func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []string, encFunc bool) ([]byte, error) {
