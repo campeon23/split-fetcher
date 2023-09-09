@@ -22,7 +22,7 @@ import (
 
 var errCh = make(chan error, 2)
 var configOnce sync.Once
-var timestamp int64 = 0
+var timestamp int64
 var appcfg = &localAppConfig{
     AppConfig: config.NewAppConfig(viper.New()),
 	ViperInstance: viper.New(),
@@ -177,10 +177,6 @@ func (dbcfg *localDBConfig) BindFlagToViper(flagName string, log logger.LoggerIn
 
 func run(appcfg *localAppConfig){
 
-	// Initialize the timestamp utilize later for functions such as encryption, manifest, etc.
-	u := utils.NewUtils(appcfg.PartsDir, appcfg.Log)
-	timestamp := u.GenerateTimestamp()
-
 	dbInitializer := &initdb.DBInitImpl{}
 	fuInitializer := &fileutils.FileUtilsInitImpl{}
 	parameters := downloader.NewParameters(appcfg.UrlFile, appcfg.NumParts, appcfg.MaxConcurrentConnections, appcfg.PartsDir, appcfg.PrefixParts, appcfg.Proxy, timestamp)
@@ -190,8 +186,7 @@ func run(appcfg *localAppConfig){
 	e := encryption.NewEncryption(dbcfg.DBConfig, dbInitializer, fuInitializer, appcfg.PartsDir, appcfg.PrefixParts, timestamp, appcfg.Log)
 	f := fileutils.NewFileutils(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
 	h := hasher.NewHasher(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
-
-	manifest.NewManifest(appcfg.PartsDir, appcfg.PrefixParts, timestamp, nil)
+	u := utils.NewUtils(appcfg.PartsDir, appcfg.Log)
 
 	appRoot, err := f.EnsureAppRoot()
 	if err != nil {
@@ -274,6 +269,10 @@ func (appcfg *localAppConfig) Execute(cmd *cobra.Command, args []string) {
 	// package or main function level in the future. Doing so would make it available 
 	// for all functions and scenarios. Current initialization is scoped to this function.
 
+	// Initialize the timestamp utilize later for functions such as encryption, manifest, etc.
+	u := utils.NewUtils(appcfg.PartsDir, appcfg.Log)
+	timestamp := u.GenerateTimestamp()
+
 	dbInitializer := &initdb.DBInitImpl{}
 	fuInitializer := &fileutils.FileUtilsInitImpl{}
 	parameters := downloader.NewParameters(appcfg.UrlFile, appcfg.NumParts, appcfg.MaxConcurrentConnections, appcfg.PartsDir, appcfg.PrefixParts, appcfg.Proxy, timestamp)
@@ -283,6 +282,8 @@ func (appcfg *localAppConfig) Execute(cmd *cobra.Command, args []string) {
 	e := encryption.NewEncryption(dbcfg.DBConfig, dbInitializer, fuInitializer, appcfg.PartsDir, appcfg.PrefixParts, timestamp, appcfg.Log)
 	f := fileutils.NewFileutils(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
 	h := hasher.NewHasher(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
+
+	manifest.NewManifest(appcfg.PartsDir, appcfg.PrefixParts, timestamp, nil)
 
 	// Process the partsDir value
 	err := f.ProcessPartsDir()

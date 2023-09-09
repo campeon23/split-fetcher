@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -37,6 +36,10 @@ type Encryption struct {
     FUInitializer  	fileutils.FUInitializer
 }
 
+type RealFileOps struct{
+	Enc *Encryption
+}
+
 func NewEncryption(dbcfg initdb.DBConfigInterface, dbInitializer initdb.DBInitializer, fuInitializer fileutils.FUInitializer, partsDir string, prefixParts string, timestamp int64, log logger.LoggerInterface) *Encryption {
 	enc := &Encryption{
 		DB: &initdb.RealDB{},
@@ -54,11 +57,6 @@ func NewEncryption(dbcfg initdb.DBConfigInterface, dbInitializer initdb.DBInitia
 
 func (e *Encryption) SetLogger(log logger.LoggerInterface) {
     e.Log = log
-}
-
-
-type RealFileOps struct{
-	Enc *Encryption
 }
 
 func (r *RealFileOps) Remove(name string) error {
@@ -198,27 +196,20 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 		return fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+	// GMC encryption mode with random nonce and authentication tag (MAC)
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("failed to initialize GCM: %w", err)
+	}
+
+	// Generate nonce and encrypt the data with it and the key
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
 		return fmt.Errorf("failed to read random bytes: %w", err)
 	}
 
-	encrypter := cipher.NewCBCEncrypter(block, iv)
-
-	paddingLength := aes.BlockSize - len(plaintext)%aes.BlockSize
-	padding := make([]byte, paddingLength)
-	for i := range padding {
-		padding[i] = byte(paddingLength)
-	}
-	plaintext = append(plaintext, padding...)
-
-	ciphertext := make([]byte, len(plaintext))
-	encrypter.CryptBlocks(ciphertext, plaintext)
-
-	// Generate HMAC of the ciphertext
-	h := hmac.New(sha256.New, key)
-	h.Write(ciphertext)
-	mac := h.Sum(nil)
+	// Create ciphertext with nonce prepended to it and append MAC to it as well
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
 
 	encryptedFilename := filename + ".enc"
 	encryptedFile, err := e.FileOps.Create(encryptedFilename)
@@ -227,19 +218,9 @@ func (e *Encryption) EncryptFile(filename string, key []byte) error {
 	}
 	defer encryptedFile.Close()
 
-	_, err = encryptedFile.Write(iv)
-	if err != nil {
-		return fmt.Errorf("failed to create aes block size: %v", err)
-	}
 	_, err = encryptedFile.Write(ciphertext)
 	if err != nil {
-		return fmt.Errorf("failed to create ciphertext: %v", err)
-	}
-
-	// Write HMAC to file
-	_, err = encryptedFile.Write(mac)
-	if err != nil {
-		return fmt.Errorf("failed to write HMAC: %w", err)
+		return fmt.Errorf("failed to write encrypted data: %w", err)
 	}
 
 	e.Log.Debugw("File encrypted successfully and saved as:", 
@@ -261,27 +242,9 @@ func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bo
 	}
 	defer encryptedFile.Close()
 
-	iv := make([]byte, aes.BlockSize)
-	_, err = encryptedFile.Read(iv)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read aes block size: %w", err)
-	}
-
 	ciphertext, err := io.ReadAll(encryptedFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encrypted file: %w", err)
-	}
-
-	// Extract HMAC from the end of the ciphertext and remove it
-	mac := ciphertext[len(ciphertext)-32:]
-	ciphertext = ciphertext[:len(ciphertext)-32]
-
-	// Validate HMAC
-	h := hmac.New(sha256.New, key)
-	h.Write(ciphertext)
-	expectedMac := h.Sum(nil)
-	if !hmac.Equal(mac, expectedMac) {
-		return nil, fmt.Errorf("integrity check failed: HMAC mismatch")
 	}
 
 	block, err := aes.NewCipher(key)
@@ -289,12 +252,22 @@ func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bo
 		return nil, fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
-	decrypter := cipher.NewCBCDecrypter(block, iv)
-	plaintext := make([]byte, len(ciphertext))
-	decrypter.CryptBlocks(plaintext, ciphertext)
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize GCM: %w", err)
+	}
 
-	paddingLength := int(plaintext[len(plaintext)-1])
-	plaintext = plaintext[:len(plaintext)-paddingLength]
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short: %w", err)
+	}
+
+	// Extract nonce and decrypt the data with it and the key
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
 
 	if toDisk {
 		decryptedFilename := strings.TrimSuffix(encryptedFilename, ".enc")
