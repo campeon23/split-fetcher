@@ -185,7 +185,10 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
 func (e *Encryption) EncryptFile(filename string, contentData []byte, key []byte) error {
-	f := e.FUInitializer.NewFileutils(e.PartsDir, e.PrefixParts, e.Log)
+	fmt.Println("Parts Dir: ", e.PartsDir)
+	fmt.Println("Prefix Parts: ", e.PrefixParts)
+	fmt.Println("Log: ", e.Log)
+
 	e.Log.Infow("Initializing encryption of manifest file.")
 
 	block, err := aes.NewCipher(key)
@@ -223,13 +226,6 @@ func (e *Encryption) EncryptFile(filename string, contentData []byte, key []byte
 	e.Log.Debugw("File encrypted successfully and saved as:", 
 		"encryptedFilename", filepath.Base(encryptedFilename),
 	)
-
-	if f.PathExists(filename) {
-		err = e.FileOps.Remove(filename)
-		if err != nil {
-			return fmt.Errorf("cannot remove manifest: %w", err)
-		}
-	}
 
 	return nil
 }

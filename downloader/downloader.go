@@ -656,7 +656,7 @@ func (d *Downloader) ManifestObject(m *manifest.Manifest, downloadManifest manif
 
 func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryption, f *fileutils.Fileutils, contentData []byte, partFilesHashes []string, fileName string, hash string) ([]byte, string, error) {
 	d.Log.Debugw("Handling encrypted manifest file")
-	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)
+	manifestPath, err := m.ManifestPath(fileName, hash)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to obtain the path of the downloaded manifest: %w", err)
 	}
