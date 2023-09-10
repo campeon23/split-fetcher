@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -86,8 +87,6 @@ func NewMockDB() *MockDB {
 func (db *MockDBInit) NewInitDB(dbDir string, dbFilename string, log logger.LoggerInterface) initdb.DBInterface {
     return db.MockDB
 }
-
-
 
 func (m *MockDBConn) Exec(query string, args ...interface{}) (sql.Result, error) {
 	// Simulate faliure if the FailOnStore flag is true
@@ -477,6 +476,8 @@ func TestCreateEncryptionKeyWithEncFuncFalse(t *testing.T) {
 }
 
 func TestEncryptFileAndDecryptFile(t *testing.T) {
+	var decodedContentBytes string
+	var decodedContentEncrypted string
 	partsDir := "test_data_tmp"
 
 	dbi := &MockDBInitializer{}
@@ -506,17 +507,22 @@ func TestEncryptFileAndDecryptFile(t *testing.T) {
 	// Mocked key for encryption (32 bytes for this example)
 	mockKey := []byte("abcdefghijklmnopqrstuvwxyzabcdef") // Change this to the desired key value
 
-	assert.NoErrorf(t, err, "Failed to create encryption key: %v", err)
+	// Mocket Encoded content
+	mockEncodedData, err := json.Marshal(testString)
+	// Assert that there is no error in encoding the manifest
+	assert.NoError(t, err, "Error encoding manifest JSON")
 
 	// Encrypt the test file
-	err = e.EncryptFile(path.Join(e.PartsDir, filename), mockKey)
+	err = e.EncryptFile(path.Join(e.PartsDir, filename), mockEncodedData, mockKey)
 	assert.NoErrorf(t, err, "Failed to encrypt file: %v", err)
 	os.Remove(path.Join(e.PartsDir, filename))
 
 	// Decrypt the file to memory
 	decryptedBytes, err := e.DecryptFile(path.Join(e.PartsDir, encryptedFilename), mockKey, false)
-	assert.NoErrorf(t, err, "Failed to decrypt file: %v", err)
-	assert.Equal(t, testString, string(decryptedBytes))
+	assert.NoErrorf(t, err, "Failed to decrypt file:")
+	err = json.Unmarshal(decryptedBytes, &decodedContentBytes)
+	assert.NoError(t, err, "Error decoding manifest JSON")
+	assert.Equal(t, testString, string(decodedContentBytes))
 
 	// Decrypt the file to disk
 	_, err = e.DecryptFile(path.Join(e.PartsDir, encryptedFilename), mockKey, true)
@@ -524,7 +530,10 @@ func TestEncryptFileAndDecryptFile(t *testing.T) {
 
 	decryptedContent, err := os.ReadFile(path.Join(e.PartsDir, decryptedFilename))
 	assert.NoErrorf(t, err, "Failed to read decrypted file: %v", err)
-	assert.Equal(t, testString, string(decryptedContent))
+	err = json.Unmarshal(decryptedContent, &decodedContentEncrypted)
+	assert.NoErrorf(t, err, "Failed to decode decrypted content: %v", err)
+
+	assert.Equal(t, testString, decodedContentEncrypted)
 }
 
 func TestMockWriteEncryptedFile(t *testing.T) {
@@ -560,8 +569,6 @@ func TestEncryptionLogic(t *testing.T) {
     _, err := rand.Read(key)
 	assert.Nil(t, err, "failed to generate random key (TestEncryptionLogic): %v", err)
     
-
-	
 	// Initialize a mock logger for testing
 	mockLogger := &MockLogger{}
     // Mocking Enhancement: Populate dataMap with expected data.
@@ -581,7 +588,14 @@ func TestEncryptionLogic(t *testing.T) {
 	err = mockFileOps.WriteEncryptedFile(testfile, key, plaintext, 0644)
     assert.Nil(t, err)
 
-    err = e.EncryptFile(testfile, key)
+	// Mocket Encoded content
+	mockEncodedData, err := json.Marshal(plaintext)
+	assert.NoError(t, err, "Error encoding manifest JSON")
+
+	fmt.Println("Test File: ", testfile)
+	fmt.Println("Key: ", key)
+
+    err = e.EncryptFile(testfile, mockEncodedData, key)
 	assert.NoError(t, err, "failed to encrypt mock manifest.")
 
     encryptedData, err := e.FileOps.ReadFile(testfile+".enc")
@@ -615,7 +629,10 @@ func TestEncryptedDataSize(t *testing.T) {
 	err = mockFileOps.WriteEncryptedFile(testfile, key, testContent, 0644)
     assert.Nil(t, err)
 
-    err = e.EncryptFile(testfile, key)
+	// Mocket Encoded content
+	mockEncodedData := []byte{123,34,117,117,105,100,34,58,34,115,97,109,112,108,101,85,85,73,68,34,44,34,118,101,114,115,105,111,110,34,58,34,115,97,109,112,108,101,86,101,114,115,105,111,110,34,44,34,102,105,108,101,110,97,109,101,34,58,34,101,97,109,112,108,101,46,116,120,116,34,44,34,102,105,108,101,95,104,97,115,104,34,58,34,115,97,109,112,108,101,104,97,115,104,34,44,34,117,114,108,34,58,34,104,116,116,112,115,58,47,47,101,120,97,109,112,108,101,46,99,111,109,47,101,120,97,109,112,108,101,46,116,120,116,34,44,34,101,116,97,103,34,58,34,115,97,109,112,108,101,69,116,97,103,34,44,34,104,97,115,104,95,116,121,112,101,34,58,34,115,97,109,112,108,101,72,97,115,104,84,121,112,101,34,44,34,112,97,114,116,115,95,100,105,114,34,58,34,115,97,109,112,108,101,80,97,114,116,115,68,105,114,34,44,34,112,114,101,102,105,120,95,112,97,114,116,115,34,58,34,115,97,109,112,108,101,80,114,101,102,105,120,80,97,114,116,115,34,44,34,115,105,122,101,34,58,49,48,48,44,34,110,117,109,95,112,97,114,116,115,34,58,49,48,44,34,114,97,110,103,101,95,115,105,122,101,34,58,49,48,44,34,100,111,119,110,108,111,97,100,101,100,95,112,97,114,116,115,34,58,91,123,34,112,97,114,116,95,110,117,109,98,101,114,34,58,49,44,34,102,105,108,101,95,104,97,115,104,34,58,34,115,97,109,112,108,101,70,105,108,101,72,97,115,104,34,44,34,116,105,109,101,115,116,97,109,112,34,58,48,44,34,112,97,114,116,95,102,105,108,101,34,58,34,115,97,109,112,108,101,80,97,114,116,70,105,108,101,34,125,93,125} // continue with the rest of the bytes
+
+    err = e.EncryptFile(testfile, mockEncodedData, key)
 	assert.NoError(t, err, "failed to encrypt mock manifest.")
 
     encryptedData, err := e.FileOps.ReadFile(testfile+".enc")
@@ -677,7 +694,13 @@ func TestEncryptFile(t *testing.T) {
 	err := mockFileOps.WriteEncryptedFile(testfile, key, testContent, 0644)
     assert.Nil(t, err)
 
-	err = e.EncryptFile(testfile, key)
+	// Mocket Encoded content
+	mockEncodedData := []byte{123,34,117,117,105,100,34,58,34,115,97,109,112,108,101,85,85,73,68,34,44,34,118,101,114,115,105,111,110,34,58,34,115,97,109,112,108,101,86,101,114,115,105,111,110,34,44,34,102,105,108,101,110,97,109,101,34,58,34,101,97,109,112,108,101,46,116,120,116,34,44,34,102,105,108,101,95,104,97,115,104,34,58,34,115,97,109,112,108,101,104,97,115,104,34,44,34,117,114,108,34,58,34,104,116,116,112,115,58,47,47,101,120,97,109,112,108,101,46,99,111,109,47,101,120,97,109,112,108,101,46,116,120,116,34,44,34,101,116,97,103,34,58,34,115,97,109,112,108,101,69,116,97,103,34,44,34,104,97,115,104,95,116,121,112,101,34,58,34,115,97,109,112,108,101,72,97,115,104,84,121,112,101,34,44,34,112,97,114,116,115,95,100,105,114,34,58,34,115,97,109,112,108,101,80,97,114,116,115,68,105,114,34,44,34,112,114,101,102,105,120,95,112,97,114,116,115,34,58,34,115,97,109,112,108,101,80,114,101,102,105,120,80,97,114,116,115,34,44,34,115,105,122,101,34,58,49,48,48,44,34,110,117,109,95,112,97,114,116,115,34,58,49,48,44,34,114,97,110,103,101,95,115,105,122,101,34,58,49,48,44,34,100,111,119,110,108,111,97,100,101,100,95,112,97,114,116,115,34,58,91,123,34,112,97,114,116,95,110,117,109,98,101,114,34,58,49,44,34,102,105,108,101,95,104,97,115,104,34,58,34,115,97,109,112,108,101,70,105,108,101,72,97,115,104,34,44,34,116,105,109,101,115,116,97,109,112,34,58,48,44,34,112,97,114,116,95,102,105,108,101,34,58,34,115,97,109,112,108,101,80,97,114,116,70,105,108,101,34,125,93,125} // continue with the rest of the bytes
+	// mockEncodedData, err := json.Marshal(testString)
+	// // Assert that there is no error in encoding the manifest
+	// assert.NoError(t, err, "Error encoding manifest JSON")
+
+	err = e.EncryptFile(testfile, mockEncodedData, key)
 	if err == nil {
 		assert.NotNil(t, err, "Expected an error due to mock os.Create, but got none.")
 	}

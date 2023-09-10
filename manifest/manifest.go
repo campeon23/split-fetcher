@@ -57,7 +57,7 @@ func (m *Manifest) SetLogger(log logger.LoggerInterface) {
     m.Log = log
 }
 
-func (m *Manifest) GetDownloadManifestPath(fileName string, hash string) (string, error)  {
+func (m *Manifest) ManifestPath(fileName string, hash string) (string, error)  {
 	// Remove all extensions from the filename, in case file contains multiple extensions or just one
 	f := fileutils.NewFileutils(m.PartsDir, m.PrefixParts, m.Log)
 	fileName = f.RemoveExtensions(fileName)
@@ -80,7 +80,7 @@ func (m *Manifest) DownloadManifestObject(manifest DownloadManifest, fileName st
 	f := fileutils.NewFileutils(m.PartsDir, m.PrefixParts, m.Log)
 	m.Log.Debugw("Initializing Config Directory")
 
-	manifestPath, err := m.GetDownloadManifestPath(fileName, hash)
+	manifestPath, err := m.ManifestPath(fileName, hash)
 	if err != nil {
 		return nil, fmt.Errorf("error getting manifest path: %w", err)
 	}
