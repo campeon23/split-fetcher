@@ -72,12 +72,12 @@ type StreamBuffer struct {
 	TotalElapsedMilliseconds	int64
 }
 
-func NewDownloader(dbcfg *config.DBConfig, parameters *Parameters, log logger.LoggerInterface, errCh chan error) *Downloader {
+func NewDownloader(dbcfg *config.DBConfig, log logger.LoggerInterface, errCh chan error, parameters *Parameters) *Downloader {
 	return &Downloader{
 		DBConfig: 					dbcfg,
-		Parameters: 				parameters,
 		Log: 						log,
 		ErrCh: 						errCh,
+		Parameters: 				parameters,
 	}
 }
 
@@ -681,31 +681,33 @@ func (d *Downloader) HandleEncryption(m *manifest.Manifest, e *encryption.Encryp
 	return key, manifestPath, nil
 }
 
-func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts string, urlFile string, downloadOnly bool, outputFile string) (manifest.DownloadManifest, map[string]string, string, []byte, int, int, string, string, error) {
+func (d *Downloader) Download(appcfg *config.AppConfig) (manifest.DownloadManifest, map[string]string, string, []byte, int, int, string, string, error) {
 	dbInitializer := &initdb.DBInitImpl{}
 	fuInitializer := &fileutils.FileUtilsInitImpl{}
 
-	e := encryption.NewEncryption(d.DBConfig, dbInitializer, fuInitializer, d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Parameters.Timestamp, d.Log)
+	parametersEncryption := encryption.NewParamters(appcfg.PartsDir, appcfg.PrefixParts, d.Parameters.Timestamp, appcfg.EncryptionCurrentVersion)
+
+	e := encryption.NewEncryption(d.DBConfig, dbInitializer, fuInitializer, appcfg.Log, parametersEncryption)
 	f := fileutils.NewFileutils(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Log)
 	m := manifest.NewManifest(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Parameters.Timestamp, d.Log)
 
-	err := d.ValidateInput(urlFile, downloadOnly)
+	err := d.ValidateInput(appcfg.UrlFile, appcfg.DownloadOnly)
     if err != nil {
         return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to validate url flag string: %w", err)
     }
 
-	hashes, err := d.ObtainShaSumsHashes(f, shaSumsURL)
+	hashes, err := d.ObtainShaSumsHashes(f, appcfg.ShaSumsURL)
     if err != nil {
         return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to download and process shasums file: %w", err)
     }
 
-    hash, downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName, err := d.ProcessHash(f, partsDir, prefixParts, shaSumsURL, hashes)
+    hash, downloadManifest, partFilesHashes, size, etag, hashType, rangeSize, fileName, err := d.ProcessHash(f, appcfg.PartsDir, appcfg.PrefixParts, appcfg.ShaSumsURL, hashes)
     if err != nil {
         return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to process shasums file: %w", err)
     }
 
-    if !downloadOnly {
-        _, err = d.FilePathAndValidation(outputFile)
+    if !appcfg.DownloadOnly {
+        _, err = d.FilePathAndValidation(appcfg.OutputFile)
         if err != nil {
             return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to validate output file path: %w", err)
         }
@@ -721,8 +723,8 @@ func (d *Downloader) Download(shaSumsURL string, partsDir string, prefixParts st
         return manifest.DownloadManifest{}, make(map[string]string), "", nil, 0, 0, "", "", fmt.Errorf("failed to handle encrypted manifest file: %w", err)
     }
 
-	if downloadOnly {
-		d.Log.Infow("Part files saved to directory", "directory", partsDir)
+	if appcfg.DownloadOnly {
+		d.Log.Infow("Part files saved to directory", "directory", appcfg.PartsDir)
 	}
 
     return downloadManifest, hashes, manifestPath, key, size, rangeSize, etag, hashType, nil

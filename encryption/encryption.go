@@ -25,33 +25,46 @@ type Encryption struct {
 	DB 				initdb.DBInterface
 	FI 				fileutils.FileInterface
 	DBConfig 		initdb.DBConfigInterface
-	PartsDir		string
-	PrefixParts		string
-	Timestamp		int64
 	Log				logger.LoggerInterface
+	Parameters 		*Parameters
 	FileOps 		fileutils.FileOperator
 	GetWrittenData 	[]byte
 	DBInitializer 	initdb.DBInitializer
     FUInitializer  	fileutils.FUInitializer
 }
 
+type Parameters struct {
+	PartsDir		string
+	PrefixParts		string
+	Timestamp		int64
+	CURRENT_VERSION string
+	// Log				logger.LoggerInterface
+}
+
 type RealFileOps struct{
 	Enc *Encryption
 }
 
-func NewEncryption(dbcfg initdb.DBConfigInterface, dbInitializer initdb.DBInitializer, fuInitializer fileutils.FUInitializer, partsDir string, prefixParts string, timestamp int64, log logger.LoggerInterface) *Encryption {
+func NewEncryption(dbcfg initdb.DBConfigInterface, dbInitializer initdb.DBInitializer, fuInitializer fileutils.FUInitializer, log logger.LoggerInterface, parameters *Parameters) *Encryption {
 	enc := &Encryption{
 		DB: &initdb.RealDB{},
 		DBConfig: dbcfg,
-		PartsDir: partsDir,
-		PrefixParts: prefixParts,
-		Timestamp: timestamp,
+		Parameters: parameters,
 		DBInitializer: dbInitializer,
 		FUInitializer: fuInitializer,
 		Log: log,
 	}
 	enc.FileOps = &RealFileOps{Enc: enc}
     return enc
+}
+
+func NewParamters(partsDir string, prefixParts string, timestamp int64, currentVersion string) *Parameters {
+	return &Parameters{
+		PartsDir: partsDir,
+		PrefixParts: prefixParts,
+		Timestamp: timestamp,
+		CURRENT_VERSION: currentVersion,
+	}
 }
 
 func (e *Encryption) SetLogger(log logger.LoggerInterface) {
@@ -79,7 +92,7 @@ func (r *RealFileOps) WriteFile(filename string, data []byte, perm os.FileMode) 
 }
 
 func (r *RealFileOps) WriteEncryptedFile(filename string, data []byte, key []byte, perm os.FileMode) error {
-	e := NewEncryption(nil, nil, nil, "", "", 0, nil)
+	e := NewEncryption(nil, nil, nil, nil, nil)
 	// Check key length for AES-256 (32 bytes)
 	if len(key) != 32 {  // Check key length for AES-256
 		return errors.New("key length must be 32 bytes for AES-256")
@@ -130,8 +143,8 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 	var buffer bytes.Buffer
 	
 	i := e.DBInitializer.NewInitDB(e.DBConfig.GetDBDir(), e.DBConfig.GetDBFilename(), e.DBConfig.GetLog())
-	f := e.FUInitializer.NewFileutils(e.PartsDir, e.PrefixParts, e.Log)
-	u := utils.NewUtils(e.PartsDir, e.Log)
+	f := e.FUInitializer.NewFileutils(e.Parameters.PartsDir, e.Parameters.PrefixParts, e.Log)
+	u := utils.NewUtils(e.Parameters.PartsDir, e.Log)
 
 	e.Log.Debugw("Initializing encryption key generation.")
 
@@ -156,7 +169,7 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 			return nil, fmt.Errorf("failed to generate random salt: %w", err)
 		}
 		// i.CheckEncrypted(e.DBConfig.DBDir, e.DBConfig.DBFilename)
-		err := i.StoreSalt(db, salt, e.Timestamp)
+		err := i.StoreSalt(db, salt, e.Parameters.Timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to store salt: %w", err)
 		}
@@ -185,31 +198,13 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
 func (e *Encryption) EncryptFile(filename string, contentData []byte, key []byte) error {
-	fmt.Println("Parts Dir: ", e.PartsDir)
-	fmt.Println("Prefix Parts: ", e.PrefixParts)
-	fmt.Println("Log: ", e.Log)
-
 	e.Log.Infow("Initializing encryption of manifest file.")
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create new cipher: %w", err)
-	}
-
-	// GMC encryption mode with random nonce and authentication tag (MAC)
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to initialize GCM: %w", err)
-	}
-
-	// Generate nonce and encrypt the data with it and the key
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return fmt.Errorf("failed to read random bytes: %w", err)
-	}
-
 	// Create ciphertext with nonce prepended to it and append MAC to it as well
-	ciphertext := gcm.Seal(nonce, nonce, contentData, nil)
+	ciphertext, err := e.versionedEncrypt(key, contentData)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt data: %w", err)
+	}
 
 	encryptedFilename := filename + ".enc"
 	encryptedFile, err := e.FileOps.Create(encryptedFilename)
@@ -229,19 +224,32 @@ func (e *Encryption) EncryptFile(filename string, contentData []byte, key []byte
 
 	return nil
 }
-
-func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
-	encryptedFile, err := e.FileOps.Open(encryptedFilename)
+ 
+func (e *Encryption) encryptData(key []byte, contentData []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open encrypted file: %w", err)
-	}
-	defer encryptedFile.Close()
-
-	ciphertext, err := io.ReadAll(encryptedFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted file: %w", err)
+		return nil, fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
+	// GMC encryption mode with random nonce and authentication tag (MAC)
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize GCM: %w", err)
+	}
+
+	// Generate nonce and encrypt the data with it and the key
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to read random bytes: %w", err)
+	}
+
+	// Create ciphertext with nonce prepended to it and append MAC to it as well
+	ciphertext := gcm.Seal(nonce, nonce, contentData, nil)
+
+	return ciphertext, nil
+}
+
+func (e *Encryption) decryptData(ciphertext []byte, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new cipher: %w", err)
@@ -260,6 +268,56 @@ func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bo
 	// Extract nonce and decrypt the data with it and the key
 	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
+	return plaintext, nil
+}
+
+func (e *Encryption) versionedEncrypt(data []byte, key []byte) ([]byte, error) {
+    encryptedData, err := e.encryptData(data, key)
+    if err != nil {
+        return nil, fmt.Errorf("failed to encrypt data: %w", err)
+    }
+	// Prepend version info to encrypted data
+    versionedData := append([]byte(e.Parameters.CURRENT_VERSION), encryptedData...)
+    return versionedData, nil
+}
+
+func (e *Encryption) versionedDecrypt(data []byte, key []byte) ([]byte, error) {
+    // Check if data is empty or doesn't even contain version info
+    if len(data) <= len(e.Parameters.CURRENT_VERSION) {
+        return nil, fmt.Errorf("data is too short to contain version information")
+    }
+
+    // Extract version and encrypted data
+    version := string(data[:len(e.Parameters.CURRENT_VERSION)])
+    encryptedData := data[len(e.Parameters.CURRENT_VERSION):]
+
+    switch version {
+    case e.Parameters.CURRENT_VERSION:
+        return e.decryptData(encryptedData, key)
+    // You can add more cases if you have more versions in the future
+    // case "V2":
+    //     return e.decryptV2(encryptedData, key)
+    default:
+        return nil, fmt.Errorf("unsupported encryption version: %s", version)
+    }
+}
+
+func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
+	encryptedFile, err := e.FileOps.Open(encryptedFilename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open encrypted file: %w", err)
+	}
+	defer encryptedFile.Close()
+
+	ciphertext, err := io.ReadAll(encryptedFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encrypted file: %w", err)
+	}
+
+	plaintext, err := e.versionedDecrypt(ciphertext, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}

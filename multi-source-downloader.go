@@ -176,14 +176,15 @@ func (dbcfg *localDBConfig) BindFlagToViper(flagName string, log logger.LoggerIn
 }
 
 func run(appcfg *localAppConfig){
-
+	// DB and FileUtils Initializer
 	dbInitializer := &initdb.DBInitImpl{}
 	fuInitializer := &fileutils.FileUtilsInitImpl{}
-	parameters := downloader.NewParameters(appcfg.UrlFile, appcfg.NumParts, appcfg.MaxConcurrentConnections, appcfg.PartsDir, appcfg.PrefixParts, appcfg.Proxy, timestamp)
+	parametersDownloader := downloader.NewParameters(appcfg.UrlFile, appcfg.NumParts, appcfg.MaxConcurrentConnections, appcfg.PartsDir, appcfg.PrefixParts, appcfg.Proxy, timestamp)
+	parametersEncryption := encryption.NewParamters(appcfg.PartsDir, appcfg.PrefixParts, timestamp, appcfg.EncryptionCurrentVersion)
 
 	a := assembler.NewAssembler(appcfg.NumParts, appcfg.PartsDir, appcfg.KeepParts, appcfg.PrefixParts, timestamp, appcfg.Log)
-	d := downloader.NewDownloader(dbcfg.DBConfig, parameters, appcfg.Log, errCh)
-	e := encryption.NewEncryption(dbcfg.DBConfig, dbInitializer, fuInitializer, appcfg.PartsDir, appcfg.PrefixParts, timestamp, appcfg.Log)
+	d := downloader.NewDownloader(dbcfg.DBConfig, appcfg.Log, errCh, parametersDownloader)
+	e := encryption.NewEncryption(dbcfg.DBConfig, dbInitializer, fuInitializer, appcfg.Log, parametersEncryption)
 	f := fileutils.NewFileutils(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
 	h := hasher.NewHasher(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
 	u := utils.NewUtils(appcfg.PartsDir, appcfg.Log)
@@ -193,7 +194,7 @@ func run(appcfg *localAppConfig){
 		appcfg.Log.Fatalf("Failed to validate current app root: %w", err)
 	}
 
-	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(appcfg.ShaSumsURL, appcfg.PartsDir, appcfg.PrefixParts, appcfg.UrlFile, appcfg.DownloadOnly, appcfg.OutputFile)
+	_, hashes, manifestPath, key, size, rangeSize, etag, hashType, err := d.Download(appcfg.AppConfig)
 	if err != nil {
 		appcfg.Log.Fatalf("Failed to download the part files: %w", err)
 	}
@@ -275,11 +276,12 @@ func (appcfg *localAppConfig) Execute(cmd *cobra.Command, args []string) {
 
 	dbInitializer := &initdb.DBInitImpl{}
 	fuInitializer := &fileutils.FileUtilsInitImpl{}
-	parameters := downloader.NewParameters(appcfg.UrlFile, appcfg.NumParts, appcfg.MaxConcurrentConnections, appcfg.PartsDir, appcfg.PrefixParts, appcfg.Proxy, timestamp)
+	parametersDownloader := downloader.NewParameters(appcfg.UrlFile, appcfg.NumParts, appcfg.MaxConcurrentConnections, appcfg.PartsDir, appcfg.PrefixParts, appcfg.Proxy, timestamp)
+	parametersEncryption := encryption.NewParamters(appcfg.PartsDir, appcfg.PrefixParts, timestamp, appcfg.EncryptionCurrentVersion)
 
 	a := assembler.NewAssembler(appcfg.NumParts, appcfg.PartsDir, appcfg.KeepParts, appcfg.PrefixParts, timestamp, appcfg.Log)
-	d := downloader.NewDownloader(dbcfg.DBConfig, parameters, appcfg.Log, errCh)
-	e := encryption.NewEncryption(dbcfg.DBConfig, dbInitializer, fuInitializer, appcfg.PartsDir, appcfg.PrefixParts, timestamp, appcfg.Log)
+	d := downloader.NewDownloader(dbcfg.DBConfig, appcfg.Log, errCh, parametersDownloader)
+	e := encryption.NewEncryption(dbcfg.DBConfig, dbInitializer, fuInitializer, appcfg.Log, parametersEncryption)
 	f := fileutils.NewFileutils(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
 	h := hasher.NewHasher(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
 
@@ -294,7 +296,7 @@ func (appcfg *localAppConfig) Execute(cmd *cobra.Command, args []string) {
 		appcfg.PartsDir = f.PartsDir
 		a.PartsDir = f.PartsDir
 		d.Parameters.PartsDir = f.PartsDir
-		e.PartsDir = f.PartsDir
+		e.Parameters.PartsDir = f.PartsDir
 	}
 
 	if appcfg.DecryptManifest {
@@ -304,7 +306,7 @@ func (appcfg *localAppConfig) Execute(cmd *cobra.Command, args []string) {
 		// Run assemble process
 		runAssembleOnly(f, h, a, appcfg)
 	} else if appcfg.DownloadOnly {
-		_, _, _, _, _, _, _, _, err := d.Download(appcfg.ShaSumsURL, appcfg.PartsDir, appcfg.PrefixParts, appcfg.UrlFile, appcfg.DownloadOnly, appcfg.OutputFile)
+		_, _, _, _, _, _, _, _, err := d.Download(appcfg.AppConfig)
 		if err != nil {
 			appcfg.Log.Fatalf("Failed to download the part files: %w", err)
 		}
@@ -412,32 +414,79 @@ func (ppcfg *localPprofConfig) DumpDebugFinalize(p *pprofutils.PprofUtils) {
 	}
 }
 
+// func LoadConfigs() {
+// 	configOnce.Do(func() {
+// 		f := fileutils.NewFileutils(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
+// 		viperPpcfg := ppcfg.ViperInstance
+// 		viperAppcfg := appcfg.ViperInstance
+// 		viperDbcfg := dbcfg.ViperInstance
+
+// 		// Will run only in development mode
+// 		if f.PathExists(ppcfg.ConfigPath) {
+// 			if os.Getenv("ENV_MODE") == "development" {
+// 				if err := f.LoadConfig(viperPpcfg, ppcfg.ConfigName, ppcfg.ConfigPath); err != nil {
+// 					appcfg.Log.Fatalf("Error loading config: %w", err)
+// 				}
+// 				ppcfg.PprofConfig = config.NewPprofConfig(viperPpcfg)
+// 			}
+// 		}
+
+// 		if f.PathExists(appcfg.ConfigPath) {
+// 			if err := f.LoadConfig(viperAppcfg, appcfg.ConfigName, appcfg.ConfigPath); err != nil {
+// 				f.Log.Fatalf("Error loading config: %w", err)
+// 			}
+// 		}
+// 		appcfg.AppConfig = config.NewAppConfig(viperAppcfg)
+
+// 		if f.PathExists(dbcfg.ConfigPath) {
+// 			if err := f.LoadConfig(viperDbcfg, dbcfg.ConfigName, dbcfg.ConfigPath); err != nil {
+// 				f.Log.Fatalf("Error loading config: %w", err)
+// 			}
+// 			dbcfg.DBConfig = config.NewDBConfig(viperDbcfg)
+// 		}
+// 	})
+// }
+
 func LoadConfigs() {
 	configOnce.Do(func() {
 		f := fileutils.NewFileutils(appcfg.PartsDir, appcfg.PrefixParts, appcfg.Log)
-		viperPpcfg := ppcfg.ViperInstance
-		viperAppcfg := appcfg.ViperInstance
-		viperDbcfg := dbcfg.ViperInstance
 
-		// Will run only in development mode
-		if f.PathExists(ppcfg.ConfigPath) {
-			if os.Getenv("ENV_MODE") == "development" {
-				if err := f.LoadConfig(viperPpcfg, ppcfg.ConfigName, ppcfg.ConfigPath); err != nil {
-					appcfg.Log.Fatalf("Error loading config: %w", err)
-				}
-				ppcfg.PprofConfig = config.NewPprofConfig(viperPpcfg)
-			}
-		}
+		loadConfigIfPathExists(f, ppcfg.ConfigPath, ppcfg.ViperInstance, ppcfg.ConfigName, func(v *viper.Viper) {
+			ppcfg.PprofConfig = config.NewPprofConfig(v)
+		})
 
-		appcfg.AppConfig = config.NewAppConfig(viperAppcfg)
+		loadConfigIfPathExists(f, appcfg.ConfigPath, appcfg.ViperInstance, appcfg.ConfigName, func(v *viper.Viper) {
+			appcfg.AppConfig = config.NewAppConfig(v)
+		})
 
-		if f.PathExists(dbcfg.ConfigPath) {
-			if err := f.LoadConfig(viperDbcfg, dbcfg.ConfigName, dbcfg.ConfigPath); err != nil {
-				f.Log.Fatalf("Error loading config: %w", err)
-			}
-			dbcfg.DBConfig = config.NewDBConfig(viperDbcfg)
-		}
+		loadConfigIfPathExists(f, dbcfg.ConfigPath, dbcfg.ViperInstance, dbcfg.ConfigName, func(v *viper.Viper) {
+			dbcfg.DBConfig = config.NewDBConfig(v)
+		})
+
+		// Handle development specific logic
+		handleDevelopmentMode(f)
 	})
+}
+
+func loadConfigIfPathExists(f *fileutils.Fileutils, path string, v *viper.Viper, configName string, onSuccess func(*viper.Viper)) {
+	if f.PathExists(path) {
+		if err := f.LoadConfig(v, configName, path); err != nil {
+			f.Log.Fatalf("Error loading config: %w", err)
+		}
+		onSuccess(v)
+	}
+}
+
+func handleDevelopmentMode(f *fileutils.Fileutils) {
+	if os.Getenv("ENV_MODE") != "development" {
+		return
+	}
+
+	if !f.PathExists(ppcfg.ConfigPath) {
+		return
+	}
+
+	// Any other development-specific logic goes here.
 }
 
 func main() {
