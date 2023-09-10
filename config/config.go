@@ -27,6 +27,7 @@ type Flags struct {
 }
 
 type AppConfig struct {
+	EncryptionCurrentVersion 	string
 	MaxConcurrentConnections	int
 	ShaSumsURL 					string
 	UrlFile  					string
@@ -42,6 +43,8 @@ type AppConfig struct {
     OutputFile 					string
 	Verbose 					bool
 	DecryptedContent 			[]byte
+	ConfigName					string
+	ConfigPath					string
 	Log 						logger.LoggerInterface
 	BindFlagsToViper 			func(string, logger.LoggerInterface)
 }
@@ -92,6 +95,7 @@ func NewFlags() *Flags {
 func NewAppConfig(v *viper.Viper) *AppConfig {
 	flags := NewFlags()
 	appcfg := &AppConfig{
+		EncryptionCurrentVersion: v.GetString("ENCRYPTION_CURRENT_VERSION"),
 		MaxConcurrentConnections: v.GetInt(flags.MaxConcurrentConnections),
 		ShaSumsURL 				: v.GetString(flags.ShaSumsURL),
 		UrlFile 				: v.GetString(flags.UrlFile),
@@ -106,6 +110,8 @@ func NewAppConfig(v *viper.Viper) *AppConfig {
 		PrefixParts	 			: v.GetString(flags.PrefixParts),
 		Proxy 		 			: v.GetString(flags.Proxy),
 		KeepParts 	 			: v.GetBool(flags.KeepParts),
+		ConfigName				: "config",
+		ConfigPath				: "./config",
 		Log 					: logger.InitLogger(false),
 	}
 	return appcfg

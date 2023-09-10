@@ -350,15 +350,17 @@ func TestNewEncryption(t *testing.T) {
 	mockDBInitializer := &MockDBInitializer{}
 	mockFileUtils := &MockFileUtils{}
 
-	enc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, "partsDir", "prefixParts", 1234567890, mockLog)
+	parameters := NewParamters("partsDir", "prefixParts", 1234567890, "v2")
+	enc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, mockLog, parameters)
+	
 
 	// Basic assertions
 	assert.NotNil(t, enc)
 	assert.NotNil(t, enc.DB)
 	assert.NotNil(t, enc.FileOps)
-	assert.Equal(t, "partsDir", enc.PartsDir)
-	assert.Equal(t, "prefixParts", enc.PrefixParts)
-	assert.Equal(t, int64(1234567890), enc.Timestamp)
+	assert.Equal(t, "partsDir", enc.Parameters.PartsDir)
+	assert.Equal(t, "prefixParts", enc.Parameters.PrefixParts)
+	assert.Equal(t, int64(1234567890), enc.Parameters.Timestamp)
 	assert.Equal(t, mockLog, enc.Log)
 }
 
@@ -368,7 +370,8 @@ func TestStoreSalt(t *testing.T) {
 	mockDB := NewMockDB()
 	mockDBInitializer := &MockDBInit{MockDB: mockDB}
 	mockFileUtils := &MockFileUtils{}
-	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, "partsDir", "prefixParts", 1234567890, mockLog)
+	mockParameters := NewParamters("partsDir", "prefixParts", 1234567890, "v2")
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, mockLog, mockParameters)
 
 	// This is a mock database connection, so you don't have a real sql.DB here
 	// The actual instance doesn't matter as our mock implementation doesn't use it
@@ -390,7 +393,8 @@ func TestStoreSaltFail(t *testing.T) {
 	mockDB.FailOnStore = true // Set this to simulate a failure
 	mockDBInitializer := &MockDBInit{MockDB: mockDB}
 	mockFileUtils := &MockFileUtils{}
-	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, "partsDir", "prefixParts", 1234567890, mockLog)
+	mockParameters := NewParamters("partsDir", "prefixParts", 1234567890, "v2")
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, mockLog, mockParameters)
 
 	// Simulate a failure
 	mockDB.FailOnStore = true
@@ -417,7 +421,8 @@ func TestCreateEncryptionKey(t *testing.T) {
 	mockDB := NewMockDB()
 	mockDBInitializer := &MockDBInit{MockDB: mockDB}
 	mockFileUtils := &MockFileUtils{}
-	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, partsDir, prefixParts, int64(timestamp), mockLog)
+	mockParameters := NewParamters(partsDir, prefixParts, int64(timestamp), "v2")
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, mockLog, mockParameters)
 
 	// This is a mock database connection, so you don't have a real sql.DB here
 	// The actual instance doesn't matter as our mock implementation doesn't use it
@@ -459,7 +464,8 @@ func TestCreateEncryptionKeyWithEncFuncFalse(t *testing.T) {
 	mockDB := NewMockDB()
 	mockDBInitializer := &MockDBInit{MockDB: mockDB}
 	mockFileUtils := &MockFileUtils{}
-	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, partsDir, prefixParts, int64(timestamp), mockLog)
+	mockParameters := NewParamters(partsDir, prefixParts, int64(timestamp), "v2")
+	mockEnc := NewEncryption(mockDBConfig, mockDBInitializer, mockFileUtils, mockLog, mockParameters)
 
 
 	// Create temp files
@@ -484,12 +490,13 @@ func TestEncryptFileAndDecryptFile(t *testing.T) {
 	fui := &MockFileUtils{}
 
 	l := logger.InitLogger(true)
-	e := NewEncryption(nil, dbi, fui, "", "", 0, l) // Adjust as needed
+	parameters := NewParamters("", "", 0, "")
+	e := NewEncryption(nil, dbi, fui, l, parameters) // Adjust as needed
 	
 	currentDir, err := os.Getwd()
 	assert.NoErrorf(t, err, "Failed to get current dir: %v", err)
 
-	e.PartsDir = currentDir + string(os.PathSeparator) + partsDir
+	e.Parameters.PartsDir = currentDir + string(os.PathSeparator) + partsDir
 
 	err = os.Mkdir(partsDir, 0755)
 	assert.NoErrorf(t, err, "Failed to create test directory: %v", err)
@@ -501,7 +508,7 @@ func TestEncryptFileAndDecryptFile(t *testing.T) {
 	decryptedFilename := testfile
 
 	// Create a test file
-	err = os.WriteFile(path.Join(e.PartsDir, filename), []byte(testString), 0644)
+	err = os.WriteFile(path.Join(e.Parameters.PartsDir, filename), []byte(testString), 0644)
 	assert.NoErrorf(t, err, "Failed to create test file: %v", err)
 
 	// Mocked key for encryption (32 bytes for this example)
@@ -513,22 +520,22 @@ func TestEncryptFileAndDecryptFile(t *testing.T) {
 	assert.NoError(t, err, "Error encoding manifest JSON")
 
 	// Encrypt the test file
-	err = e.EncryptFile(path.Join(e.PartsDir, filename), mockEncodedData, mockKey)
+	err = e.EncryptFile(path.Join(e.Parameters.PartsDir, filename), mockEncodedData, mockKey)
 	assert.NoErrorf(t, err, "Failed to encrypt file: %v", err)
-	os.Remove(path.Join(e.PartsDir, filename))
+	os.Remove(path.Join(e.Parameters.PartsDir, filename))
 
 	// Decrypt the file to memory
-	decryptedBytes, err := e.DecryptFile(path.Join(e.PartsDir, encryptedFilename), mockKey, false)
+	decryptedBytes, err := e.DecryptFile(path.Join(e.Parameters.PartsDir, encryptedFilename), mockKey, false)
 	assert.NoErrorf(t, err, "Failed to decrypt file:")
 	err = json.Unmarshal(decryptedBytes, &decodedContentBytes)
 	assert.NoError(t, err, "Error decoding manifest JSON")
 	assert.Equal(t, testString, string(decodedContentBytes))
 
 	// Decrypt the file to disk
-	_, err = e.DecryptFile(path.Join(e.PartsDir, encryptedFilename), mockKey, true)
+	_, err = e.DecryptFile(path.Join(e.Parameters.PartsDir, encryptedFilename), mockKey, true)
 	assert.NoErrorf(t, err, "Failed to decrypt file: %v", err)
 
-	decryptedContent, err := os.ReadFile(path.Join(e.PartsDir, decryptedFilename))
+	decryptedContent, err := os.ReadFile(path.Join(e.Parameters.PartsDir, decryptedFilename))
 	assert.NoErrorf(t, err, "Failed to read decrypted file: %v", err)
 	err = json.Unmarshal(decryptedContent, &decodedContentEncrypted)
 	assert.NoErrorf(t, err, "Failed to decode decrypted content: %v", err)
@@ -583,6 +590,9 @@ func TestEncryptionLogic(t *testing.T) {
 	e := &Encryption{
 		Log: mockLogger,
 		FileOps: mockFileOps,
+		Parameters: &Parameters{
+        CURRENT_VERSION: "v1",
+    },
 	}
 
 	err = mockFileOps.WriteEncryptedFile(testfile, key, plaintext, 0644)
@@ -624,6 +634,9 @@ func TestEncryptedDataSize(t *testing.T) {
 	e := &Encryption{
 		Log: mockLogger,
 		FileOps: mockFileOps,
+		Parameters: &Parameters{
+			CURRENT_VERSION: "v1",
+		},								
 	}
 
 	err = mockFileOps.WriteEncryptedFile(testfile, key, testContent, 0644)
@@ -796,6 +809,9 @@ func TestDecryptFile(t *testing.T) {
 			e := &Encryption{
 				Log: mockLogger,
 				FileOps: &MockFileOps{},
+				Parameters: &Parameters{
+					CURRENT_VERSION: "v1",
+				},	
 			}
 
 			e.FileOps = &MockFileOps{data: tt.mockData}
