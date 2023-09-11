@@ -173,7 +173,7 @@ func (p *PprofUtils) StartPprof(certPath string, keyPath string) chan error {
 	go func() {
 		defer func() {
 		if r := recover(); r != nil {
-				fmt.Println("Recovered from panic:", r)
+				p.Log.Infow("Recovered from panic:", r)
 			}
 		}()
 		defer p.wg.Done()

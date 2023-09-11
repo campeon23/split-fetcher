@@ -89,7 +89,6 @@ func (db *RealDB) CreateSaltTable(database *sql.DB) error {
 }
 
 // StoreSalt maps to InitDB's StoreSalt
-// func (db *RealDB) StoreSalt(database *sql.DB, salt []byte, timestamp int64) error {
 func (db *RealDB) StoreSalt(database SQLExecer, salt []byte, timestamp int64) error {
 	_, err := db.Init.StoreSalt(database, salt, timestamp)
 	if err != nil {
@@ -147,7 +146,6 @@ func (i *InitDB) InitializeDB(password string) (*sql.DB, error) {
 	//Ensure the database directory exists
 	if !f.PathExists(i.DBDir) {
 		if err := os.MkdirAll(i.DBDir, os.ModePerm); err != nil {
-			fmt.Println("Failed to create database directory.")
 			return nil, fmt.Errorf("failed to create database directory: %w", err)
 		}
 	}
@@ -169,14 +167,12 @@ func (i *InitDB) InitializeDB(password string) (*sql.DB, error) {
 
 	db, err := sql.Open("sqlite3", dbPathWithDSN)
 	if err != nil {
-		fmt.Println("Failed to open database.")
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	err = db.Ping()
 	if err != nil {
 		db.Close()
-		fmt.Println("Failed to ping database.")
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -248,9 +244,7 @@ func (i *InitDB) CreateTimestampIndex(db *sql.DB) error {
 func (i *InitDB) CheckEncrypted(dbDir string, dbName string) (bool, error) {
 	// Check if database is encrypted
 	f := fileutils.NewFileutils("", "", i.Log)
-	fmt.Println("DB Path:", filepath.Join(dbDir, dbName))
 	if f.PathExists(filepath.Join(dbDir, dbName)){
-		fmt.Printf("DB exist: %v", filepath.Join(dbDir, dbName))
 		encrypted, err := sqlite3.IsEncrypted(filepath.Join(dbDir, dbName))
 		if err != nil {
 			return false, fmt.Errorf("failed to check if database is encrypted: %w", err)

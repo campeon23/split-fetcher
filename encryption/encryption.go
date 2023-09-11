@@ -38,7 +38,6 @@ type Parameters struct {
 	PrefixParts		string
 	Timestamp		int64
 	CURRENT_VERSION string
-	// Log				logger.LoggerInterface
 }
 
 type RealFileOps struct{
@@ -125,6 +124,7 @@ func (r *RealFileOps) WriteDecryptedFile(filename string, key []byte, data []byt
 	return os.WriteFile(filename, decryptedData, 0644)
 }
 
+/* Key Generation Logic */
 // Generate a salt value
 func generateRandomSalt(length int) ([]byte, error) {
     results := make([]byte, length)
@@ -168,7 +168,7 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate random salt: %w", err)
 		}
-		// i.CheckEncrypted(e.DBConfig.DBDir, e.DBConfig.DBFilename)
+
 		err := i.StoreSalt(db, salt, e.Parameters.Timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to store salt: %w", err)
@@ -196,6 +196,7 @@ func (e *Encryption) CreateEncryptionKey(encryptedFilename string, strings []str
 	return key, nil
 }
 
+/* Encryption Logic */
 // encryptFile encrypts the file with the given key and writes the encrypted data to a new file
 func (e *Encryption) EncryptFile(filename string, contentData []byte, key []byte) error {
 	e.Log.Infow("Initializing encryption of manifest file.")
@@ -249,31 +250,6 @@ func (e *Encryption) encryptData(key []byte, contentData []byte) ([]byte, error)
 	return ciphertext, nil
 }
 
-func (e *Encryption) decryptData(ciphertext []byte, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create new cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize GCM: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short: %w", err)
-	}
-
-	// Extract nonce and decrypt the data with it and the key
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
-	}
-	return plaintext, nil
-}
-
 func (e *Encryption) versionedEncrypt(data []byte, key []byte) ([]byte, error) {
     encryptedData, err := e.encryptData(data, key)
     if err != nil {
@@ -284,27 +260,7 @@ func (e *Encryption) versionedEncrypt(data []byte, key []byte) ([]byte, error) {
     return versionedData, nil
 }
 
-func (e *Encryption) versionedDecrypt(data []byte, key []byte) ([]byte, error) {
-    // Check if data is empty or doesn't even contain version info
-    if len(data) <= len(e.Parameters.CURRENT_VERSION) {
-        return nil, fmt.Errorf("data is too short to contain version information")
-    }
-
-    // Extract version and encrypted data
-    version := string(data[:len(e.Parameters.CURRENT_VERSION)])
-    encryptedData := data[len(e.Parameters.CURRENT_VERSION):]
-
-    switch version {
-    case e.Parameters.CURRENT_VERSION:
-        return e.decryptData(encryptedData, key)
-    // You can add more cases if you have more versions in the future
-    // case "V2":
-    //     return e.decryptV2(encryptedData, key)
-    default:
-        return nil, fmt.Errorf("unsupported encryption version: %s", version)
-    }
-}
-
+/* Decryption Logic */
 func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
 	encryptedFile, err := e.FileOps.Open(encryptedFilename)
 	if err != nil {
@@ -344,4 +300,50 @@ func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bo
 	} else {
 		return plaintext, nil
 	}
+}
+
+func (e *Encryption) decryptData(ciphertext []byte, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize GCM: %w", err)
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short: %w", err)
+	}
+
+	// Extract nonce and decrypt the data with it and the key
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
+	return plaintext, nil
+}
+
+func (e *Encryption) versionedDecrypt(data []byte, key []byte) ([]byte, error) {
+    // Check if data is empty or doesn't even contain version info
+    if len(data) <= len(e.Parameters.CURRENT_VERSION) {
+        return nil, fmt.Errorf("data is too short to contain version information")
+    }
+
+    // Extract version and encrypted data
+    version := string(data[:len(e.Parameters.CURRENT_VERSION)])
+    encryptedData := data[len(e.Parameters.CURRENT_VERSION):]
+
+    switch version {
+    case e.Parameters.CURRENT_VERSION:
+        return e.decryptData(encryptedData, key)
+    // You can add more cases if you have more versions in the future
+    // case "V2":
+    //     return e.decryptV2(encryptedData, key)
+    default:
+        return nil, fmt.Errorf("unsupported encryption version: %s", version)
+    }
 }

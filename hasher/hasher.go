@@ -45,7 +45,6 @@ func (h *Hasher) SetLogger(log logger.LoggerInterface) {
 func (h *Hasher) DownloadAndParseHashFile(shaSumsURL string) (map[string]string, error) {
 	u := utils.NewUtils("", h.Log)
 	if h.Log == nil {
-		fmt.Println("Error: Logger not initialized in hasher!")
 		return nil, fmt.Errorf("logger not initialized in hasher")
 	}
 	resp, err := http.Get(shaSumsURL)

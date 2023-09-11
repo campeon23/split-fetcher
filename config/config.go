@@ -38,6 +38,7 @@ type AppConfig struct {
 	KeepParts 					bool
 	DecryptManifest 			bool
 	ManifestFile 				string
+	ManifestTimestamp 			int64
     DownloadOnly 				bool
     AssembleOnly 				bool
     OutputFile 					string
@@ -102,6 +103,7 @@ func NewAppConfig(v *viper.Viper) *AppConfig {
 		NumParts 				: v.GetInt(flags.NumParts),
 		Verbose 				: v.GetBool(flags.Verbose),
 		ManifestFile 			: v.GetString(flags.ManifestFile),
+		ManifestTimestamp 		: 0,
 		DecryptManifest 		: v.GetBool(flags.DecryptManifest),
         DownloadOnly 			: v.GetBool(flags.DownloadOnly),
         AssembleOnly 			: v.GetBool(flags.AssembleOnly),

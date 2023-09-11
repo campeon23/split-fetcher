@@ -33,13 +33,6 @@ type HTTPClient interface {
 }
 type Downloader struct {
 	DBConfig 					*config.DBConfig
-	// URLFile 					string 
-	// NumParts 					int 
-	// MaxConcurrentConnections 	int
-	// PartsDir 					string
-	// PrefixParts 				string
-	// Proxy 						string
-	// Timestamp 					int64
 	Parameters 					*Parameters
 	Log 						logger.LoggerInterface
 	ErrCh 						chan error
@@ -685,11 +678,11 @@ func (d *Downloader) Download(appcfg *config.AppConfig) (manifest.DownloadManife
 	dbInitializer := &initdb.DBInitImpl{}
 	fuInitializer := &fileutils.FileUtilsInitImpl{}
 
-	parametersEncryption := encryption.NewParamters(appcfg.PartsDir, appcfg.PrefixParts, d.Parameters.Timestamp, appcfg.EncryptionCurrentVersion)
+	parametersEncryption := encryption.NewParamters(appcfg.PartsDir, appcfg.PrefixParts, appcfg.ManifestTimestamp, appcfg.EncryptionCurrentVersion)
 
 	e := encryption.NewEncryption(d.DBConfig, dbInitializer, fuInitializer, appcfg.Log, parametersEncryption)
 	f := fileutils.NewFileutils(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Log)
-	m := manifest.NewManifest(d.Parameters.PartsDir, d.Parameters.PrefixParts, d.Parameters.Timestamp, d.Log)
+	m := manifest.NewManifest(d.Parameters.PartsDir, d.Parameters.PrefixParts, appcfg.ManifestTimestamp, d.Log)
 
 	err := d.ValidateInput(appcfg.UrlFile, appcfg.DownloadOnly)
     if err != nil {

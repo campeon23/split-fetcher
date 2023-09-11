@@ -19,7 +19,7 @@ type Assembler struct {
 	PartsDir 	string
 	PrefixParts string
 	KeepParts 	bool
-	TimeStamp	int64
+	Timestamp	int64
 	Log			logger.LoggerInterface
 }
 
@@ -33,7 +33,7 @@ func NewAssembler(numParts int, partsDir string, keepParts bool, prefixParts str
 		PartsDir: partsDir,
 		KeepParts: keepParts,
 		PrefixParts: prefixParts,
-		TimeStamp: timestamp,
+		Timestamp: timestamp,
 		Log: log,
 	}
 }
@@ -144,7 +144,7 @@ func (a *Assembler) validatePartFileCompletion(i int, copied int64, size int, ra
 
 func (a *Assembler) PrepareAssemblyEnviroment(outputFile string, manifestContent []byte) (manifest.DownloadManifest, *os.File, string, error) {
 	f := fileutils.NewFileutils(a.PartsDir, a.PrefixParts, a.Log)
-	m := manifest.NewManifest(a.PartsDir, a.PrefixParts, a.TimeStamp, a.Log)
+	m := manifest.NewManifest(a.PartsDir, a.PrefixParts, a.Timestamp, a.Log)
 
 	manifest, filePath, fileName, err := m.ExtractManifestFilePathFileName(outputFile, manifestContent)
 	if err != nil {
