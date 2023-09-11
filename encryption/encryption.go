@@ -262,18 +262,8 @@ func (e *Encryption) versionedEncrypt(data []byte, key []byte) ([]byte, error) {
 
 /* Decryption Logic */
 func (e *Encryption) DecryptFile(encryptedFilename string, key []byte, toDisk bool) ([]byte, error) {
-	encryptedFile, err := e.FileOps.Open(encryptedFilename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open encrypted file: %w", err)
-	}
-	defer encryptedFile.Close()
-
-	ciphertext, err := io.ReadAll(encryptedFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted file: %w", err)
-	}
-
-	plaintext, err := e.versionedDecrypt(ciphertext, key)
+	// Decrypt data in memory first and subsequently write the decrypted data, if required directly to the disk.
+	plaintext, err := e.decryptFileToMemory(encryptedFilename, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
@@ -325,6 +315,15 @@ func (e *Encryption) decryptData(ciphertext []byte, key []byte) ([]byte, error) 
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
 	return plaintext, nil
+}
+
+func (e *Encryption) decryptFileToMemory(filePath string, key []byte) ([]byte, error) {
+    e.Log.Infow("Initializing decryption of manifest file.")
+	ciphertext, err := os.ReadFile(filePath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read encrypted file: %w", err)
+    }
+	return e.versionedDecrypt(ciphertext, key)
 }
 
 func (e *Encryption) versionedDecrypt(data []byte, key []byte) ([]byte, error) {
