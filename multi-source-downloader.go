@@ -205,14 +205,6 @@ func run(appcfg *localAppConfig){
 		appcfg.Log.Fatalf("Decrypting manifest file: %w", err)
 	}
 
-	if appcfg.KeepParts {
-		// Dump the decrypted content to a JSON file
-		err = os.WriteFile(manifestPath, appcfg.DecryptedContent, 0644)
-		if err != nil {
-			appcfg.Log.Fatalf("Writing decrypted content to JSON file: %w", err)
-		}
-	}
-
 	manifest, outFile, outputPath, err := a.PrepareAssemblyEnviroment(appcfg.OutputFile, appcfg.DecryptedContent)
 	if err != nil {
 		appcfg.Log.Fatalf("Failed to prepare assembly environment: %w", err)
