@@ -61,7 +61,6 @@ func (l *MockLogger) Printf(msg string, args ...interface{}) {
 }
 
 func (l *MockLogger) Sync() {
-	fmt.Println("Sync is called!")
 	l.SyncCalls++
 }
 

@@ -121,6 +121,5 @@ func TestDBConfigInitConfig(t *testing.T) {
 	assert.Empty(t, v.GetString("DBPassword"), "Expected environment variable DBPassword to be read")
 	assert.Empty(t, v.GetString("ConfigName"), "Expected environment variable ConfigName to be read")
 	assert.Empty(t, v.GetString("ConfigPath"), "Expected environment variable ConfigPath to be read")
-	// assert.True(t, v.GetBool("TEST_AUTO_ENV"), "Expected environment variable TEST_AUTO_ENV to be read")
 }
 // ... similar tests for other getter methods and initialization functions

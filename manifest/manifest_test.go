@@ -71,7 +71,6 @@ func splitPath(filename string) (string, string, string, string, string, error) 
 		// Handle the error or unexpected input accordingly
 		return "", "", "", "", "", fmt.Errorf("invalid input")
 	}
-	fmt.Println("Timestamp: ", parts[3])
 	return parts[0], parts[1], parts[2], parts[3], extension, nil
 }
 
@@ -165,7 +164,6 @@ func TestExtractManifestFilePathFileName(t *testing.T) {
 	m, manifest, filename, hash := setupTest()
 
 	encodedData, err := m.DownloadManifestObject(*manifest, filename, hash)
-	fmt.Println(encodedData)
 	assert.NoError(err, "Error saving download manifest")
 	_, _, _, err = m.ExtractManifestFilePathFileName(filename, encodedData)
 	assert.NoError(err, "Error extracting manifest file path and file name")

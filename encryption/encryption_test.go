@@ -253,7 +253,6 @@ func (l *MockLogger) Printf(msg string, args ...interface{}) {
 }
 
 func (l *MockLogger) Sync() {
-	fmt.Println("Sync is called!")
 	l.SyncCalls++
 }
 
@@ -601,9 +600,6 @@ func TestEncryptionLogic(t *testing.T) {
 	// Mocket Encoded content
 	mockEncodedData, err := json.Marshal(plaintext)
 	assert.NoError(t, err, "Error encoding manifest JSON")
-
-	fmt.Println("Test File: ", testfile)
-	fmt.Println("Key: ", key)
 
     err = e.EncryptFile(testfile, mockEncodedData, key)
 	assert.NoError(t, err, "failed to encrypt mock manifest.")

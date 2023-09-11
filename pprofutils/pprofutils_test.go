@@ -3,7 +3,6 @@ package pprofutils
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -49,7 +48,6 @@ func TestStartServerWithShutdown(t *testing.T) {
 
 	select {
 	case err := <-errChan:
-		fmt.Println("Received error:", err) // for debugging purposes
     	assert.Nil(t, err, "Expected no error but got: %v", err)
 	case <-time.After(1 * time.Second):
 		assert.NotNil(t, "expected server to shut down by now")
