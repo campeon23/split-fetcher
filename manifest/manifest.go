@@ -9,8 +9,8 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/campeon23/multi-source-downloader/fileutils"
-	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/split-fetcher/fileutils"
+	"github.com/campeon23/split-fetcher/logger"
 )
 
 type Manifest struct {
@@ -68,9 +68,9 @@ func (m *Manifest) ManifestPath(fileName string, hash string) (string, error)  {
 		if err != nil {
 			return "", fmt.Errorf("error fetching user information: %w", err)
 		}
-		path = filepath.Join(user.HomeDir, "Appdata", ".multi-source-downloader")
+		path = filepath.Join(user.HomeDir, "Appdata", ".split-fetcher")
 	} else {
-		path = filepath.Join(os.Getenv("HOME"), ".config", ".multi-source-downloader")
+		path = filepath.Join(os.Getenv("HOME"), ".config", ".split-fetcher")
 	}
 
 	return filepath.Join(path, fileName + "-manifest-" + hash + "-" + strconv.FormatInt(m.TimeStamp, 10) + ".json"), nil

@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/campeon23/multi-source-downloader/config"
-	"github.com/campeon23/multi-source-downloader/fileutils"
-	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/split-fetcher/config"
+	"github.com/campeon23/split-fetcher/fileutils"
+	"github.com/campeon23/split-fetcher/logger"
 
 	sqlite3 "github.com/mutecomm/go-sqlcipher/v4"
 )

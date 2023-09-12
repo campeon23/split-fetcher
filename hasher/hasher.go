@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/campeon23/multi-source-downloader/logger"
-	"github.com/campeon23/multi-source-downloader/utils"
+	"github.com/campeon23/split-fetcher/logger"
+	"github.com/campeon23/split-fetcher/utils"
 )
 
 type Hasher struct {

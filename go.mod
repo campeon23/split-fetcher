@@ -1,4 +1,4 @@
-module github.com/campeon23/multi-source-downloader
+module github.com/campeon23/split-fetcher
 
 go 1.20
 

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"os"
 
-	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/split-fetcher/logger"
 	"github.com/spf13/viper"
 )
 

@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/campeon23/multi-source-downloader/hasher"
-	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/split-fetcher/hasher"
+	"github.com/campeon23/split-fetcher/logger"
 	"github.com/stretchr/testify/mock"
 )
 

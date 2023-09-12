@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/campeon23/multi-source-downloader/database/initdb"
-	"github.com/campeon23/multi-source-downloader/fileutils"
-	"github.com/campeon23/multi-source-downloader/logger"
+	"github.com/campeon23/split-fetcher/database/initdb"
+	"github.com/campeon23/split-fetcher/fileutils"
+	"github.com/campeon23/split-fetcher/logger"
 	"github.com/stretchr/testify/assert"
 )
 
