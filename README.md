@@ -1,13 +1,13 @@
 
-# :rocket: Multi-Source Downloader
+# :rocket: Split Fetcher
 
-The Multi-Source Downloader is a highly efficient application crafted in Go. It takes a file, fragments it into **n parts**, and then downloads them concurrently in a highly optimized way. As a cherry on top, it then reassembles the final file, either through **Etag** or **Hash validation**, ensuring the file's integrity. And there's more...
+The Split Fetcher is a highly efficient application crafted in Go. It takes a file, fragments it into **n parts**, and then downloads them concurrently in a highly optimized way. As a cherry on top, it then reassembles the final file, either through **Etag** or **Hash validation**, ensuring the file's integrity. And there's more...
 
 ![Downloader Graphic](./images/downloader.png)
 
 ## :pushpin: Features
 
-* Split file download into parts
+* Split downloaded file into chunks
 * Concurrent download
 * File integrity validation via Etag or Hash
 * And many more...
