@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/campeon23/multi-source-downloader/hasher"
-	"github.com/campeon23/multi-source-downloader/logger"
-	"github.com/campeon23/multi-source-downloader/manifest"
+	"github.com/campeon23/split-fetcher/hasher"
+	"github.com/campeon23/split-fetcher/logger"
+	"github.com/campeon23/split-fetcher/manifest"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -17,9 +17,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
 
-	"github.com/campeon23/multi-source-downloader/fileutils"
-	"github.com/campeon23/multi-source-downloader/logger"
-	"github.com/campeon23/multi-source-downloader/utils"
+	"github.com/campeon23/split-fetcher/fileutils"
+	"github.com/campeon23/split-fetcher/logger"
+	"github.com/campeon23/split-fetcher/utils"
 )
 
 type Server interface {
